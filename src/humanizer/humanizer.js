@@ -3,10 +3,56 @@ import { chat } from "../core/llm.js";
 const $ = (id) => document.getElementById(id);
 const input = $("input"), output = $("output");
 const inWords = $("inWords"), outWords = $("outWords"), status = $("status");
+const changePctEl = $("changePct");
 let mode = "balanced";
 let detectTarget = "input";
 
 const wc = (s) => (s.trim() ? s.trim().split(/\s+/).length : 0);
+
+// Output is a rich (highlightable) div; keep the plain text result alongside it.
+let outputText = "";
+const getOutput = () => outputText;
+function setOutput(text, original) {
+  outputText = text || "";
+  if (text && original != null && $("showDiff").checked && window.Diff) {
+    const d = window.Diff.diffWords(original, text);
+    output.innerHTML = d.html;
+    changePctEl.textContent = d.changePct + "%";
+  } else {
+    output.textContent = text || "";
+    changePctEl.textContent = "0%";
+  }
+  outWords.textContent = wc(outputText);
+}
+
+// Fill the before/after AI-likelihood strip from detector scores.
+function showScoreStrip(original, humanized) {
+  const before = window.Detector.detect(original);
+  const after = window.Detector.detect(humanized);
+  const fmt = (r) => (r.score == null ? "–" : r.score + "%");
+  const tag = (r) => (r.score == null ? "(need ~20 words)" : r.label);
+  const colorFor = (s) =>
+    s == null ? "var(--muted)" : s >= 70 ? "#ef4444" : s >= 45 ? "#f59e0b" : "#22c55e";
+
+  $("beforeScore").textContent = fmt(before);
+  $("beforeScore").style.color = colorFor(before.score);
+  $("beforeTag").textContent = tag(before);
+  $("afterScore").textContent = fmt(after);
+  $("afterScore").style.color = colorFor(after.score);
+  $("afterTag").textContent = tag(after);
+
+  const delta = $("scoreDelta");
+  if (before.score != null && after.score != null) {
+    const drop = before.score - after.score;
+    delta.hidden = false;
+    if (drop > 0) { delta.className = "score-delta good"; delta.textContent = `▼ ${drop} pts less AI`; }
+    else if (drop < 0) { delta.className = "score-delta bad"; delta.textContent = `▲ ${-drop} pts more AI`; }
+    else { delta.className = "score-delta"; delta.textContent = "no change"; }
+  } else {
+    delta.hidden = true;
+  }
+  $("scoreStrip").hidden = false;
+}
 const setStatus = (m, ms) => {
   status.textContent = m;
   if (ms) setTimeout(() => { if (status.textContent === m) status.textContent = ""; }, ms);
@@ -43,14 +89,20 @@ $("sampleBtn").onclick = () => {
   inWords.textContent = wc(input.value);
 };
 $("clearBtn").onclick = () => {
-  input.value = output.value = "";
-  inWords.textContent = outWords.textContent = "0";
+  input.value = "";
+  setOutput("");
+  inWords.textContent = "0";
+  $("scoreStrip").hidden = true;
 };
 $("copyBtn").onclick = async () => {
-  if (!output.value) return;
-  await navigator.clipboard.writeText(output.value);
+  const text = getOutput();
+  if (!text) return;
+  await navigator.clipboard.writeText(text);
   setStatus("Copied!", 1500);
 };
+$("showDiff").addEventListener("change", () => {
+  if (getOutput()) setOutput(getOutput(), input.value.trim());
+});
 
 // Grab the current selection from the active tab.
 $("pageBtn").onclick = async () => {
@@ -112,8 +164,7 @@ btn.onclick = async () => {
         maxRounds: useLLM ? 5 : 3,
         llm: useLLM ? llmRewrite : null,
         onRound: (info) => {
-          output.value = info.text;
-          outWords.textContent = wc(info.text);
+          setOutput(info.text, text);
           setStatus(`Round ${info.round + 1} · ${info.via} · score ${info.score}`);
         },
       });
@@ -142,8 +193,8 @@ btn.onclick = async () => {
     btn.disabled = false;
   }
 
-  output.value = result;
-  outWords.textContent = wc(result);
+  setOutput(result, text);
+  showScoreStrip(text, result);
   detectTarget = "output";
   syncDetectTabs();
   runDetect();
@@ -157,7 +208,7 @@ function syncDetectTabs() {
   );
 }
 function runDetect() {
-  const text = (detectTarget === "output" ? output.value : input.value).trim();
+  const text = (detectTarget === "output" ? getOutput() : input.value).trim();
   window.renderDetector(detectorBody, window.Detector.detect(text));
 }
 document.querySelectorAll(".seg-sm .seg-btn").forEach((b) => {

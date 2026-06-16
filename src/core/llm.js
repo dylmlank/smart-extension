@@ -19,15 +19,53 @@ async function getKey() {
 
 // ---- Ollama ----
 async function callOllama(messages, signal) {
-  const res = await fetch(OLLAMA_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: OLLAMA_MODEL, messages, stream: false }),
-    signal
-  });
+  let res;
+  try {
+    res = await fetch(OLLAMA_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: OLLAMA_MODEL, messages, stream: false }),
+      signal
+    });
+  } catch (e) {
+    // A network/CORS failure here is almost always one of two things:
+    //   1. Ollama isn't running (`ollama serve`).
+    //   2. Ollama is running but blocks the extension origin (CORS) — fix with
+    //      OLLAMA_ORIGINS=* (or chrome-extension://*) in its environment.
+    if (e.name === "AbortError") throw e;
+    throw new Error(
+      "ollama unreachable — is `ollama serve` running and OLLAMA_ORIGINS set " +
+      "to allow this extension? (" + e.message + ")"
+    );
+  }
+  if (res.status === 404) {
+    throw new Error(`ollama model "${OLLAMA_MODEL}" not found — run: ollama pull ${OLLAMA_MODEL}`);
+  }
   if (!res.ok) throw new Error(`ollama ${res.status}`);
   const data = await res.json();
   return { text: data.message?.content ?? "", provider: "ollama" };
+}
+
+// Is a local Ollama reachable from this extension at all? Used to give the UI
+// an honest status instead of silently looking like "not running".
+export async function ollamaHealth() {
+  try {
+    const res = await fetch(OLLAMA_URL.replace("/api/chat", "/api/tags"));
+    if (!res.ok) return { ok: false, reason: `HTTP ${res.status}` };
+    const data = await res.json();
+    const models = (data.models || []).map((m) => m.name);
+    return {
+      ok: true,
+      models,
+      hasModel: models.includes(OLLAMA_MODEL),
+      model: OLLAMA_MODEL
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      reason: "unreachable (not running, or OLLAMA_ORIGINS blocks this extension)"
+    };
+  }
 }
 
 // ---- OpenRouter (with model fallback on 429) ----
@@ -63,7 +101,10 @@ async function callOpenRouter(messages, signal) {
   throw lastErr || new Error("openrouter failed");
 }
 
-// Race both providers; first successful response wins, the other is aborted.
+// Race the available providers; first successful response wins, the other is
+// aborted. OpenRouter only joins the race when a key is configured — otherwise
+// Ollama runs alone and we surface its real error (e.g. CORS / not running)
+// instead of a misleading "all providers failed".
 export async function chat(messages) {
   const ac1 = new AbortController();
   const ac2 = new AbortController();
@@ -71,21 +112,22 @@ export async function chat(messages) {
   const wrap = (p, ac) =>
     p.then(r => ({ ok: true, r })).catch(e => ({ ok: false, e, ac }));
 
-  const ollama = wrap(callOllama(messages, ac1.signal), ac1);
-  const openrouter = wrap(callOpenRouter(messages, ac2.signal), ac2);
+  const hasKey = !!(await getKey());
 
-  // Promise.any over the wrapped winners
+  const racers = [wrap(callOllama(messages, ac1.signal), ac1)];
+  if (hasKey) racers.push(wrap(callOpenRouter(messages, ac2.signal), ac2));
+
   return new Promise((resolve, reject) => {
-    let pending = 2;
-    const settle = (res, otherAc) => {
+    let pending = racers.length;
+    const acs = [ac1, ac2];
+    const settle = (res, ownIdx) => {
       if (res.ok) {
-        otherAc.abort();
+        acs.forEach((ac, i) => i !== ownIdx && ac.abort());
         resolve(res.r);
       } else if (--pending === 0) {
         reject(res.e || new Error("all providers failed"));
       }
     };
-    ollama.then(res => settle(res, ac2));
-    openrouter.then(res => settle(res, ac1));
+    racers.forEach((racer, i) => racer.then(res => settle(res, i)));
   });
 }
