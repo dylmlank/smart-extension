@@ -285,21 +285,33 @@
     // Punctuation profile (formal serial commas/semicolons/colons vs. informal).
     const sigPunct = punctuationProfile(t, sents, wordCount);
 
-    // Weighted blend. Repetition + cliché density are the strongest tells.
+    // Predictability / perplexity proxy: how often the next word is the
+    // statistically obvious one. LLM text is low-perplexity (very predictable).
+    const P = (typeof global !== "undefined" && global.Predictability) ||
+              (typeof window !== "undefined" && window.Predictability) || null;
+    const sigPredict = P ? P.predictability(t) : 0.5;
+    const hasPredict = !!P;
+
+    // Weighted blend. Predictability + repetition + cliché are the strongest.
     const weights = [
-      [sigCliche, 0.22, "AI cliché / buzzword density", cliche.toFixed(1) + " / 100 words"],
-      [sigRepeat, 0.15, "Repeated phrasing", sigRepeat > 0.3 ? "reuses phrases (AI-like)" : "low repetition"],
-      [sigBurst, 0.13, "Sentence rhythm", burst > 0.5 ? "varied (human-like)" : "uniform (AI-like)"],
-      [sigOpeners, 0.10, "Repeated sentence openers", sigOpeners > 0.3 ? "same openings repeat" : "varied openings"],
-      [sigPunct, 0.08, "Punctuation profile", sigPunct > 0.4 ? "formal (AI-like)" : "informal (human-like)"],
-      [sigAntithesis, 0.07, "Antithesis templates", antithesisHits + " (\"not X, but Y\")"],
-      [sigVariety, 0.06, "Vocabulary variety", (variety * 100).toFixed(0) + "% unique"],
-      [sigHedge, 0.05, "Hedging / filler", hedge.toFixed(1) + " / 100 words"],
-      [sigThree, 0.04, "Rule-of-three lists", threes + " found"],
-      [sigFormulaic, 0.04, "Formulaic framing", formulaic + " openers/closers"],
-      [sigNoContractions, 0.03, "Contraction use", contractions + " found"],
-      [sigDash, 0.03, "Em-dash regularity", dashes + " dashes"],
+      [sigCliche, 0.20, "AI cliché / buzzword density", cliche.toFixed(1) + " / 100 words"],
+      [sigPredict, 0.16, "Predictability (perplexity)", sigPredict > 0.5 ? "low perplexity (AI-like)" : "high perplexity (human-like)"],
+      [sigRepeat, 0.13, "Repeated phrasing", sigRepeat > 0.3 ? "reuses phrases (AI-like)" : "low repetition"],
+      [sigBurst, 0.12, "Sentence rhythm", burst > 0.5 ? "varied (human-like)" : "uniform (AI-like)"],
+      [sigOpeners, 0.09, "Repeated sentence openers", sigOpeners > 0.3 ? "same openings repeat" : "varied openings"],
+      [sigPunct, 0.07, "Punctuation profile", sigPunct > 0.4 ? "formal (AI-like)" : "informal (human-like)"],
+      [sigAntithesis, 0.06, "Antithesis templates", antithesisHits + " (\"not X, but Y\")"],
+      [sigVariety, 0.05, "Vocabulary variety", (variety * 100).toFixed(0) + "% unique"],
+      [sigHedge, 0.04, "Hedging / filler", hedge.toFixed(1) + " / 100 words"],
+      [sigThree, 0.03, "Rule-of-three lists", threes + " found"],
+      [sigFormulaic, 0.03, "Formulaic framing", formulaic + " openers/closers"],
+      [sigNoContractions, 0.01, "Contraction use", contractions + " found"],
+      [sigDash, 0.01, "Em-dash regularity", dashes + " dashes"],
     ];
+
+    // If the predictability table isn't loaded, redistribute its weight so the
+    // score stays calibrated (don't let a neutral 0.5 drag every result up).
+    if (!hasPredict) weights.splice(1, 1);
 
     let score = 0;
     for (const [val, w] of weights) score += val * w;
@@ -315,6 +327,13 @@
     if (sigRepeat >= 0.5) score = Math.max(score, 65);
     // Multiple antithesis templates in one passage rarely happen in human prose.
     if (antithesisHits >= 2) score = Math.max(score, 70);
+    // Very low perplexity / heavy filler constructions: fluent but contentless
+    // text reads AI even with no buzzwords. Require a corroborating structural
+    // signal (uniform rhythm OR repeated openers OR another filler tell) so a
+    // plain-but-human short paragraph isn't flagged on predictability alone.
+    const corroborated = sigBurst >= 0.4 || sigOpeners >= 0.3 || sigCliche >= 0.2;
+    if (hasPredict && sigPredict >= 0.75 && corroborated) score = Math.max(score, 58);
+    if (hasPredict && sigPredict >= 0.9 && corroborated) score = Math.max(score, 66);
 
     score = Math.round(clamp(score, 1, 99));
 

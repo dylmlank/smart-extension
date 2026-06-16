@@ -179,6 +179,59 @@
     });
   }
 
+  // Tighten vague AI "filler constructions": modal hedges that add no content
+  // ("can handle" -> "handles"), padded quantifiers, and possessive doubling.
+  // This is what lowers the perplexity/filler signal on fluent-but-empty text.
+  function tightenFiller(text) {
+    let out = text;
+    // "X can/will <verb>" -> "X <verb>s" for vague modals. We convert the modal
+    // + base verb into a plain present-tense verb to cut the hedge.
+    const VERB3 = {
+      handle: "handles", adapt: "adapts", help: "helps", provide: "provides",
+      ensure: "ensures", make: "makes", allow: "allows", improve: "improves",
+      offer: "offers", serve: "serves", vary: "varies", differ: "differs",
+      process: "processes", find: "finds", lead: "leads", create: "creates",
+      support: "supports", enhance: "improves", learn: "learns", grow: "grows",
+    };
+    out = out.replace(
+      /\b(it|they|this|that|the\s+\w+|users?|system|model|tool|we|you)\s+(?:can|will|may)\s+(\w+)\b/gi,
+      (m, subj, verb) => {
+        const key = verb.toLowerCase();
+        if (!(key in VERB3)) return m;
+        const plural = /^(they|we|you|users)$/i.test(subj.trim());
+        return subj + " " + (plural ? key : VERB3[key]);
+      }
+    );
+    // Elided subject after a conjunction: "and can adapt" -> "and adapts".
+    out = out.replace(
+      /\b(and|but|or|that|which)\s+(?:can|will|may)\s+(\w+)\b/gi,
+      (m, conj, verb) => {
+        const key = verb.toLowerCase();
+        return key in VERB3 ? conj + " " + VERB3[key] : m;
+      }
+    );
+    // "continue to <verb>" -> "keeps <verb>ing"? Too fragile — just drop the
+    // hedge: "will continue to improve" -> "keeps improving".
+    out = out.replace(/\b(?:will\s+)?continue\s+to\s+(\w+)\b/gi, (m, v) => {
+      const ing = v.replace(/e$/, "") + "ing";
+      return "keeps " + ing;
+    });
+    // "users will find that it makes" -> "it makes" (drop the framing).
+    out = out.replace(/\b\w+\s+find(?:s)?\s+that\s+it\b/gi, "it");
+    // Padded quantifiers.
+    out = out.replace(/\ba\s+(?:wide|broad|diverse|vast)\s+(?:range|array|variety|spectrum)\s+of\b/gi, "many");
+    // Possessive doubling: "its own X and its own Y" -> "X and Y".
+    out = out.replace(/\bits?\s+own\s+(\w+)\s+and\s+its?\s+own\s+(\w+)\b/gi, "$1 and $2");
+    out = out.replace(/\beach\s+(\w+)\s+has\s+its\s+own\b/gi, "each $1 has");
+    // "there are many ways to" -> "you can"
+    out = out.replace(/\bthere\s+are\s+(?:many|several|various|numerous|countless)\s+ways?\s+to\b/gi, "you can");
+    // "the best way to X is to Y" -> "to X, Y"
+    out = out.replace(/\bthe\s+best\s+way\s+to\b/gi, "to");
+    // "this will help ensure" -> "this ensures"
+    out = out.replace(/\bthis\s+will\s+help\s+ensure\b/gi, "this ensures");
+    return out;
+  }
+
   // Sentence-initial transition words that AI overuses. We thin these out.
   const TRANSITIONS = [
     "moreover", "furthermore", "additionally", "consequently",
@@ -432,6 +485,7 @@
     t = applyPhrases(t);
     t = breakAntithesis(t);     // kill "not just X, but Y" templates
     t = dropFormulaic(t);       // strip "In conclusion", "First and foremost"…
+    t = tightenFiller(t);       // cut vague modal hedges / contentless filler
     t = rotateSynonyms(t, rnd); // vary common-word swaps run to run
 
     let sentences = splitSentences(t);
