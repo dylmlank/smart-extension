@@ -3,6 +3,7 @@
 
 import { chat } from "../core/llm.js";
 import { insightContext, logAction } from "../core/retrospective.js";
+import { createAndRun, listTools, runOps } from "./toolfactory.js";
 
 // ---- Tools the agents can use (browser side effects) ----
 const tools = {
@@ -97,6 +98,37 @@ export const AGENTS = {
       const { text: out, provider } = await ask(sys, `TIME ON SITES TODAY:\n${top}\n\nTASK: ${task}`);
       return { output: out, provider };
     }
+  },
+
+  // The self-extending agent: when no specialist fits, it CREATES a tool
+  // for the task (or reuses one it built earlier) and runs it.
+  builder: {
+    desc: "Handle any other task by reusing or building a new custom tool.",
+    async run(task, payload) {
+      const existing = await listTools();
+
+      // Try to reuse a tool it already built for a similar task.
+      if (Object.keys(existing).length) {
+        const menu = Object.entries(existing)
+          .map(([n, t]) => `${n}: ${t.desc}`)
+          .join("\n");
+        const { text } = await ask(
+          `You have these custom tools:\n${menu}\n\nIf ONE clearly fits the task, reply with just its name. Otherwise reply "NONE".`,
+          task
+        );
+        const pick = text.trim().split(/\s+/)[0];
+        if (existing[pick]) {
+          const result = await runOps(existing[pick], payload || {});
+          return { output: typeof result === "string" ? result : JSON.stringify(result, null, 2),
+                   provider: "custom-tool", tool: pick, reused: true };
+        }
+      }
+
+      // None fit — build a new one and run it.
+      const { tool, provider, result } = await createAndRun(task, payload || {});
+      const output = typeof result === "string" ? result : JSON.stringify(result, null, 2);
+      return { output: `🔧 Built tool "${tool}" and ran it:\n\n${output}`, provider, tool, created: true };
+    }
   }
 };
 
@@ -114,12 +146,14 @@ export async function orchestrate(task, payload) {
   if (!name) {
     const menu = Object.entries(AGENTS).map(([k, v]) => `${k}: ${v.desc}`).join("\n");
     const { text } = await ask(
-      `Route the task to ONE agent. Reply with only the agent name.\nAgents:\n${menu}`,
+      `Route the task to ONE agent. Reply with only the agent name.\n` +
+      `If no specialist clearly fits, choose "builder" — it can create a tool for anything.\nAgents:\n${menu}`,
       task
     );
     name = text.trim().split(/\s+/)[0].toLowerCase();
   }
-  if (!AGENTS[name]) name = "summarizer";
+  // Anything unrecognized falls to the self-extending builder, not summarizer.
+  if (!AGENTS[name]) name = "builder";
 
   try {
     const res = await AGENTS[name].run(task, payload);

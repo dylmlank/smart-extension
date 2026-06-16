@@ -11,7 +11,9 @@ Orchestrator (agents.js)
   ├─ summarizer   — summarize / Q&A on the current page
   ├─ organizer    — group, dedupe, close tabs
   ├─ researcher   — explain selection, build a research log
-  └─ focus        — time-on-site coaching
+  ├─ focus        — time-on-site coaching
+  └─ builder      — SELF-EXTENDING: builds a new tool for any unhandled task
+        │           (toolfactory.js), reuses tools it built before
         │
         ▼
    LLM layer (llm.js) ── races Ollama (local) vs OpenRouter (cloud), fastest wins
@@ -39,6 +41,26 @@ Ollama allows the extension origin:
 OLLAMA_ORIGINS='chrome-extension://*' ollama serve
 ```
 
+## Self-built tools (the `builder` agent)
+
+When you give the assistant a task no specialist covers, the **builder** agent
+**creates a new tool for it on the fly**, saves it, and reuses it next time.
+
+Because MV3 service workers can't `eval()` arbitrary code (CSP), tools aren't raw
+JS. The LLM designs each tool as a *plan of safe ops* from a fixed vocabulary,
+and a sandboxed interpreter (`runOps`) executes it. Real self-extension, no
+arbitrary-code-execution hole.
+
+Allowed ops: `fetchText`, `fetchJson`, `queryTabs`, `extract` (CSS selector on
+the page), `store`/`load`, `llm` (reason over collected data), `openTab`. Steps
+chain results with `$name` references.
+
+> Example: *"get the top 5 Hacker News story titles and summarize the themes"* →
+> builder writes a tool that `fetchJson`s the HN API, `fetchJson`s each item, then
+> runs an `llm` step to summarize — and keeps it under **My tools** for reuse.
+
+Manage them from the popup's **My tools** link.
+
 ## Features
 
 - **Summarize / ask** about any page
@@ -56,4 +78,5 @@ OLLAMA_ORIGINS='chrome-extension://*' ollama serve
 | `src/core/llm.js` | Ollama vs OpenRouter race |
 | `src/core/retrospective.js` | the constant self-improvement loop |
 | `src/agents/agents.js` | orchestrator + specialist agents |
+| `src/agents/toolfactory.js` | runtime tool creation + sandboxed op executor |
 | `src/ui/` | popup + options (light/dark) |

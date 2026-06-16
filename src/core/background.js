@@ -1,6 +1,7 @@
 // Service worker: message router, focus tracking, retrospective scheduler.
 import { orchestrate } from "../agents/agents.js";
 import { runRetrospective } from "./retrospective.js";
+import { listTools, deleteTool, createAndRun } from "../agents/toolfactory.js";
 
 // ---- Message handling from popup / content / options ----
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -10,6 +11,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse(await orchestrate(msg.task, msg.payload));
       } else if (msg.type === "retro") {
         sendResponse(await runRetrospective());
+      } else if (msg.type === "listTools") {
+        sendResponse({ tools: await listTools() });
+      } else if (msg.type === "deleteTool") {
+        await deleteTool(msg.name);
+        sendResponse({ ok: true });
+      } else if (msg.type === "buildTool") {
+        sendResponse(await createAndRun(msg.task, msg.payload));
       } else {
         sendResponse({ error: "unknown message" });
       }
