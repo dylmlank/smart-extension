@@ -21,6 +21,12 @@
   <label for="key">OpenRouter API Key (optional)</label>
   <input id="key" type="password" placeholder="sk-or-..." />
   <p class="hint">Used as a cloud fallback. The extension races this against your local Ollama and uses whichever responds first. Leave blank to run fully local.</p>
+  <label style="margin-top:28px;display:flex;align-items:center;gap:10px;cursor:pointer">
+    <input id="codemode" type="checkbox" style="width:auto" />
+    Enable Code Mode (advanced)
+  </label>
+  <p class="hint">⚠️ When on, the assistant can write and run <b>real JavaScript</b> to build tools for any task. Code runs in a sandboxed iframe with no direct access to your tabs or extension internals — it can only call a fixed, audited bridge API (fetch, page text, storage, the LLM). Still, it executes model-generated code; leave off unless you want maximum capability.</p>
+
   <button id="save">Save</button>
   <span id="status"></span>
   <script src="options.js"></script>

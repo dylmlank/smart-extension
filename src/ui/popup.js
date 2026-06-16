@@ -44,7 +44,7 @@ document.getElementById("tools").onclick = async e => {
   const { tools } = await chrome.runtime.sendMessage({ type: "listTools" });
   const names = Object.values(tools || {});
   out.textContent = names.length
-    ? "🔧 Tools I've built:\n\n" + names.map(t => `• ${t.name} — ${t.desc}`).join("\n")
+    ? "🔧 Tools I've built:\n\n" + names.map(t => `• ${t.name} ${t.mode === "code" ? "⚡" : ""}— ${t.desc}`).join("\n")
     : "No custom tools yet. Ask me to do something new and I'll build one.";
   prov.textContent = `${names.length} custom tool(s)`;
 };

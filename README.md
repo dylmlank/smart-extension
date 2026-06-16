@@ -61,6 +61,28 @@ chain results with `$name` references.
 
 Manage them from the popup's **My tools** link.
 
+### Code Mode (opt-in, advanced)
+
+Settings → **Enable Code Mode** unlocks a more powerful path: the builder writes
+**real JavaScript** (loops, branching, parsing — anything) instead of the
+constrained op-plan. Off by default.
+
+Security model — three nested layers so generated code never touches your browser
+directly:
+
+```
+service worker (full privilege)
+  └─ offscreen document  (has chrome.*, holds the bridge whitelist)
+       └─ sandboxed iframe  (CSP allows eval; has ZERO chrome.* access)
+            └─ generated JS runs here, can only call api.* → postMessage → bridge
+```
+
+The sandbox (`src/sandbox/`) is the only place `eval`/`new Function` runs, and it
+can't reach any extension API. It calls an `api` object whose methods are
+postMessage bridges to the offscreen doc (`src/offscreen/`), which services them
+with a fixed, audited whitelist (`fetchText/Json`, `queryTabs`, `extract`,
+`store/load`, `llm`, `openTab`). Code-mode tools show a ⚡ in **My tools**.
+
 ## Features
 
 - **Summarize / ask** about any page
@@ -78,5 +100,7 @@ Manage them from the popup's **My tools** link.
 | `src/core/llm.js` | Ollama vs OpenRouter race |
 | `src/core/retrospective.js` | the constant self-improvement loop |
 | `src/agents/agents.js` | orchestrator + specialist agents |
-| `src/agents/toolfactory.js` | runtime tool creation + sandboxed op executor |
+| `src/agents/toolfactory.js` | runtime tool creation + op executor + code-mode bridge |
+| `src/offscreen/` | privileged host for the sandbox (holds the bridge whitelist) |
+| `src/sandbox/` | sandboxed iframe — the only place generated JS executes |
 | `src/ui/` | popup + options (light/dark) |

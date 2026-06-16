@@ -5,6 +5,8 @@ import { listTools, deleteTool, createAndRun } from "../agents/toolfactory.js";
 
 // ---- Message handling from popup / content / options ----
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // Messages addressed to the offscreen document are handled there, not here.
+  if (msg?.type === "offscreen-execJs") return false;
   (async () => {
     try {
       if (msg.type === "task") {

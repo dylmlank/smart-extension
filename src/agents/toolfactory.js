@@ -11,6 +11,47 @@
 import { chat } from "../core/llm.js";
 
 const TOOLS_KEY = "custom_tools";
+const CODE_MODE_KEY = "codeModeEnabled";
+
+// ---------------------------------------------------------------------------
+// OPT-IN CODE MODE: run real generated JS in a sandboxed offscreen iframe.
+// Off by default. When on, the builder can write arbitrary JS instead of the
+// constrained op-plan — more powerful, gated behind a settings toggle.
+// ---------------------------------------------------------------------------
+
+export async function isCodeModeEnabled() {
+  const { [CODE_MODE_KEY]: on } = await chrome.storage.local.get(CODE_MODE_KEY);
+  return !!on;
+}
+
+let offscreenReady = null;
+async function ensureOffscreen() {
+  if (offscreenReady) return offscreenReady;
+  offscreenReady = (async () => {
+    const existing = await chrome.runtime.getContexts?.({
+      contextTypes: ["OFFSCREEN_DOCUMENT"]
+    }).catch(() => []);
+    if (!existing || existing.length === 0) {
+      await chrome.offscreen.createDocument({
+        url: "src/offscreen/offscreen.html",
+        reasons: ["IFRAME_SCRIPTING"],
+        justification: "Run user-approved generated tool code in a sandboxed iframe."
+      });
+    }
+  })();
+  return offscreenReady;
+}
+
+// Execute arbitrary JS (body of an async fn with `api` and `params` in scope).
+export async function execJs(code, params = {}) {
+  if (!(await isCodeModeEnabled())) {
+    throw new Error("Code mode is off. Enable it in Settings to run generated JS.");
+  }
+  await ensureOffscreen();
+  const res = await chrome.runtime.sendMessage({ type: "offscreen-execJs", code, params });
+  if (res?.error) throw new Error(res.error);
+  return res?.result;
+}
 
 // ---- Allowed operations (the entire capability surface) ----
 const OPS = {
@@ -88,8 +129,12 @@ function resolve(v, ctx) {
   return v;
 }
 
-// ---- Execute a tool's op-plan safely ----
+// ---- Execute a tool. Dispatches on mode: safe op-plan, or sandboxed code. ----
 export async function runOps(tool, params = {}) {
+  if (tool.mode === "code") {
+    // Real JS, executed in the sandboxed offscreen iframe (opt-in only).
+    return execJs(tool.code, params);
+  }
   const ctx = { ...params };
   let last = null;
   for (const [i, step] of (tool.steps || []).entries()) {
@@ -129,8 +174,45 @@ function validate(tool) {
   return tool;
 }
 
+// ---- Code-mode factory: ask the LLM to WRITE real JS for the task ----
+async function createCodeTool(taskDescription) {
+  const apiDocs = `
+You write the BODY of an async function. Available in scope:
+  api.fetchText(url, opts?)   -> string
+  api.fetchJson(url, opts?)   -> parsed JSON
+  api.queryTabs(query?)       -> [{id,title,url}]
+  api.extract(selector, html?)-> text/html from the active page
+  api.store(key, value) / api.load(key)
+  api.llm(prompt, system?)    -> string from the language model
+  api.openTab(url, focus?)    -> {id}
+  api.log(...)                -> debug log
+  params                      -> object of inputs
+You may use loops, try/catch, JSON, fetch results, etc.
+End by 'return'ing the final result (string or JSON-serializable).`;
+
+  const sys = `You author browser-automation tools as JavaScript. ${apiDocs}\n\nOutput STRICT JSON only:\n{"name":"snake_case","desc":"what it does","params":["arg1"],"mode":"code","code":"<the async function body>"}\nThe "code" value is JS as a JSON string. No markdown, no prose.`;
+
+  const { text, provider } = await chat([
+    { role: "system", content: sys },
+    { role: "user", content: `Write a tool for this task:\n${taskDescription}` }
+  ]);
+
+  let tool;
+  try {
+    tool = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] || "{}");
+  } catch {
+    throw new Error("LLM did not return valid tool JSON");
+  }
+  if (typeof tool.code !== "string" || !tool.code.trim()) throw new Error("code tool has no code");
+  tool.mode = "code";
+  tool.name = String(tool.name || "tool").replace(/[^a-z0-9_]/gi, "_").slice(0, 40);
+  await saveTool(tool);
+  return { tool, provider };
+}
+
 // ---- The factory: ask the LLM to DESIGN a new tool for a task ----
 export async function createTool(taskDescription) {
+  if (await isCodeModeEnabled()) return createCodeTool(taskDescription);
   const opDocs = `
 fetchText {url}            -> GET url, returns text
 fetchJson {url}            -> GET url, returns parsed JSON

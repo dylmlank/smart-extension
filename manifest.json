@@ -10,8 +10,12 @@
     "scripting",
     "bookmarks",
     "tabGroups",
-    "alarms"
+    "alarms",
+    "offscreen"
   ],
+  "sandbox": {
+    "pages": ["src/sandbox/sandbox.html"]
+  },
   "host_permissions": [
     "http://localhost/*",
     "https://openrouter.ai/*",
