@@ -249,7 +249,14 @@
     const sigVariety = clamp((0.62 - variety) / 0.25, 0, 1);
 
     // Cliché phrases + single-word AI tells, combined per 100 words.
-    const cliche = density(t, AI_PHRASES, wordCount) + density(t, AI_WORDS, wordCount) * 0.6;
+    // Phrases learned by the retrospective loop are checked too, so the detector
+    // catches more over time without a code change.
+    const L = (typeof global !== "undefined" && global.Learnings) ||
+              (typeof window !== "undefined" && window.Learnings) || null;
+    const learned = L ? L.learnedPhrases() : [];
+    const cliche = density(t, AI_PHRASES, wordCount) +
+                   density(t, AI_WORDS, wordCount) * 0.6 +
+                   density(t, learned, wordCount);
     const sigCliche = clamp(cliche / 3, 0, 1);
 
     const hedge = density(t, HEDGES, wordCount);

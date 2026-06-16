@@ -1,5 +1,9 @@
 import { chat } from "../core/llm.js";
 
+// Load any learnings persisted from past runs into the sync cache so the
+// detector/humanizer pick them up immediately.
+if (window.Learnings && window.Learnings.hydrate) window.Learnings.hydrate();
+
 const $ = (id) => document.getElementById(id);
 const input = $("input"), output = $("output");
 const inWords = $("inWords"), outWords = $("outWords"), status = $("status");
@@ -198,7 +202,32 @@ btn.onclick = async () => {
   detectTarget = "output";
   syncDetectTabs();
   runDetect();
+
+  // Retrospective: reflect on this run and learn from it (non-blocking). Uses
+  // the extension's LLM (Ollama/OpenRouter) when "Deep rewrite" is on, else a
+  // fast offline rule-based reflection.
+  runRetro(text, result, useLLM);
 };
+
+// Reflect on a run and persist learnings that improve future detect/humanize.
+async function runRetro(inp, outp, useLLM) {
+  if (!window.Retrospective || !window.Learnings) return;
+  try {
+    const after = window.Detector.detect(outp);
+    const run = {
+      input: inp, output: outp,
+      beforeScore: window.Detector.detect(inp).score,
+      afterScore: after.score,
+      survivedSignals: (after.signals || []).filter((s) => s.contribution >= 25),
+    };
+    const reflector = useLLM ? llmRewrite : null;
+    const res = await window.Retrospective.reflect(run, reflector);
+    if (res && res.added) {
+      const a = res.added, n = a.phrases + a.replacements + a.notes;
+      if (n > 0) setStatus(`Learned ${a.phrases} tell(s), ${a.replacements} fix(es)`, 3000);
+    }
+  } catch { /* best-effort */ }
+}
 
 // Detector
 const detectorBody = $("detectorBody");

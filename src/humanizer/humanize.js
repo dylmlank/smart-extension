@@ -269,9 +269,26 @@
   function applyPhrases(text) {
     let out = text;
     for (const [re, rep] of PHRASES) out = out.replace(re, rep);
+    out = applyLearned(out);   // replacements learned by the retrospective loop
     // Fix capitalization / spacing left by removed lead-ins.
     out = out.replace(/\s{2,}/g, " ");
     out = out.replace(/(^|[.!?]\s+)([a-z])/g, (m, p, c) => p + c.toUpperCase());
+    return out;
+  }
+
+  // Apply replacements the retrospective loop has learned. Each is matched as a
+  // case-insensitive whole-phrase swap; bad regexes are skipped defensively.
+  function applyLearned(text) {
+    const L = (typeof window !== "undefined" && window.Learnings) ||
+              (typeof globalThis !== "undefined" && globalThis.Learnings) || null;
+    if (!L) return text;
+    let out = text;
+    for (const r of L.learnedReplacements()) {
+      try {
+        const re = new RegExp("\\b" + r.from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b", "gi");
+        out = out.replace(re, r.to);
+      } catch { /* skip malformed */ }
+    }
     return out;
   }
 
