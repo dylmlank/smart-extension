@@ -79,24 +79,75 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   }
 });
 
-// ---- Context menu: humanize selected text in the Humanize AI tab ----
+// ---- Context menus: act on selected text from any page ----
+// Top-level "Smart Assistant" with quick writing/translate/explain actions, plus
+// the full humanizer opener. Selection-based actions run the matching agent and
+// show the result inline via the content script (no tab switch needed).
 const HUMANIZE_MENU_ID = "humanize-selection";
 
+// Each entry: [menu id, title, agent task, extra payload]. `agent`/`payload`
+// are looked up in onClicked below.
+const SELECTION_ACTIONS = [
+  { id: "sa-fix",          title: "Fix grammar",       task: "Fix grammar",        style: "fix" },
+  { id: "sa-concise",      title: "Make it concise",   task: "Make concise",       style: "concise" },
+  { id: "sa-professional", title: "Make professional", task: "Make professional",  style: "professional" },
+  { id: "sa-humanize-inl", title: "Humanize",          task: "Humanize",           style: "humanize" },
+  { id: "sa-explain",      title: "Explain this",      task: "Explain the selected text" },
+  { id: "sa-translate-es", title: "Translate → Spanish", task: "Translate to Spanish", lang: "Spanish" },
+  { id: "sa-translate-en", title: "Translate → English", task: "Translate to English", lang: "English" },
+];
+
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.create({
-    id: HUMANIZE_MENU_ID,
-    title: "Humanize with AI",
-    contexts: ["selection"],
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({
+      id: "sa-root", title: "Smart Assistant", contexts: ["selection"],
+    });
+    for (const a of SELECTION_ACTIONS) {
+      chrome.contextMenus.create({
+        id: a.id, parentId: "sa-root", title: a.title, contexts: ["selection"],
+      });
+    }
+    chrome.contextMenus.create({
+      id: "sa-sep", parentId: "sa-root", type: "separator", contexts: ["selection"],
+    });
+    chrome.contextMenus.create({
+      id: HUMANIZE_MENU_ID, parentId: "sa-root",
+      title: "Open in Humanizer + Detector", contexts: ["selection"],
+    });
   });
 });
 
-chrome.contextMenus.onClicked.addListener(async (info) => {
-  if (info.menuItemId !== HUMANIZE_MENU_ID) return;
-  // Stash the selection so the page can pick it up immediately on load.
-  if (info.selectionText) {
-    await chrome.storage.local.set({ humanizePrefill: info.selectionText });
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  // Full humanizer tab (kept as before).
+  if (info.menuItemId === HUMANIZE_MENU_ID) {
+    if (info.selectionText) {
+      await chrome.storage.local.set({ humanizePrefill: info.selectionText });
+    }
+    chrome.tabs.create({ url: chrome.runtime.getURL("src/humanizer/humanizer.html?prefill=1") });
+    return;
   }
-  chrome.tabs.create({
-    url: chrome.runtime.getURL("src/humanizer/humanizer.html?prefill=1"),
-  });
+
+  // Inline selection actions: run the agent and show the result on the page.
+  const action = SELECTION_ACTIONS.find((a) => a.id === info.menuItemId);
+  if (!action || !info.selectionText || !tab?.id) return;
+
+  const payload = { selection: info.selectionText };
+  if (action.style) payload.style = action.style;
+  if (action.lang) payload.lang = action.lang;
+
+  // Tell the content script to show a loading bubble immediately.
+  chrome.tabs.sendMessage(tab.id, { type: "saResult", state: "loading", title: action.title }).catch(() => {});
+
+  try {
+    const res = await orchestrate(action.task, payload, []);
+    chrome.tabs.sendMessage(tab.id, {
+      type: "saResult", state: "done", title: action.title,
+      output: res.output || res.error || "(no response)",
+    }).catch(() => {});
+  } catch (e) {
+    chrome.tabs.sendMessage(tab.id, {
+      type: "saResult", state: "done", title: action.title,
+      output: "Error: " + (e.message || e),
+    }).catch(() => {});
+  }
 });

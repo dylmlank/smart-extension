@@ -68,9 +68,18 @@
     [/\bdiving into\b/gi, "getting into"],
     [/\bembark on\b/gi, "start"],
     [/\bembark upon\b/gi, "start"],
-    [/\bharness(?:ing)?\b/gi, "use"],
-    [/\bunlock(?:ing)?\b/gi, "open up"],
-    [/\bunleash(?:ing)?\b/gi, "release"],
+    [/\bharnessing\b/gi, "using"],
+    [/\bharnesses\b/gi, "uses"],
+    [/\bharnessed\b/gi, "used"],
+    [/\bharness\b/gi, "use"],
+    [/\bunlocking\b/gi, "opening up"],
+    [/\bunlocks\b/gi, "opens up"],
+    [/\bunlocked\b/gi, "opened up"],
+    [/\bunlock\b/gi, "open up"],
+    [/\bunleashing\b/gi, "releasing"],
+    [/\bunleashes\b/gi, "releases"],
+    [/\bunleashed\b/gi, "released"],
+    [/\bunleash\b/gi, "release"],
     [/\belevates\b/gi, "raises"],
     [/\belevating\b/gi, "raising"],
     [/\belevate\b/gi, "raise"],
@@ -78,14 +87,26 @@
     [/\bempowering\b/gi, "helping"],
     [/\bempower\b/gi, "help"],
     [/\boptimize\b/gi, "improve"],
-    [/\bstreamline(?:s|d)?\b/gi, "simplify"],
-    [/\bshowcase(?:s|d)?\b/gi, "show"],
-    [/\bspearhead(?:s|ed|ing)?\b/gi, "lead"],
+    [/\bstreamlines\b/gi, "simplifies"],
+    [/\bstreamlined\b/gi, "simplified"],
+    [/\bstreamlining\b/gi, "simplifying"],
+    [/\bstreamline\b/gi, "simplify"],
+    [/\bshowcases\b/gi, "shows"],
+    [/\bshowcased\b/gi, "showed"],
+    [/\bshowcasing\b/gi, "showing"],
+    [/\bshowcase\b/gi, "show"],
+    [/\bspearheading\b/gi, "leading"],
+    [/\bspearheads\b/gi, "leads"],
+    [/\bspearheaded\b/gi, "led"],
+    [/\bspearhead\b/gi, "lead"],
     [/\bfosters\b/gi, "builds"],
     [/\bfostering\b/gi, "building"],
     [/\bfoster\b/gi, "build"],
     [/\bdynamic\b/gi, "fast-moving"],
-    [/\bunderscore(?:s|d)?\b/gi, "show"],
+    [/\bunderscores\b/gi, "shows"],
+    [/\bunderscored\b/gi, "showed"],
+    [/\bunderscoring\b/gi, "showing"],
+    [/\bunderscore\b/gi, "show"],
     [/\bcornerstone\b/gi, "basis"],
     [/\ba myriad of\b/gi, "many"],
     [/\bmyriad\b/gi, "many"],
@@ -123,6 +144,46 @@
     [/\bplay(?:s|ed)? a significant role in\b/gi, "matters for"],
     [/\bvaluable insights?\b/gi, "useful points"],
     [/\bcomprehensive (?:understanding|overview|guide)\b/gi, "full picture"],
+    // Abstract self-help / motivational register — the strongest tell in smooth,
+    // buzzword-free AI advice. Rewrite to plainer, more concrete phrasing so the
+    // detector's "generic-advice abstraction" signal stops firing.
+    [/\bcan transform your life in countless ways\b/gi, "changes a lot for you"],
+    [/\btransform your life in countless ways\b/gi, "changes a lot for you"],
+    [/\bcan transform your life\b/gi, "changes things for you"],
+    [/\btransform your life\b/gi, "changes things"],
+    [/\bin countless ways\b/gi, "in lots of ways"],
+    [/\bcountless ways\b/gi, "lots of ways"],
+    [/\byour future self\b/gi, "you later"],
+    [/\ba worthwhile investment in\b/gi, "good for"],
+    [/\bworthwhile investment\b/gi, "good move"],
+    [/\bis a worthwhile (?:choice|goal|pursuit)\b/gi, "is worth it"],
+    [/\bworthwhile\b/gi, "worth it"],
+    [/\bfor long[- ]term success\b/gi, "to last"],
+    [/\blong[- ]term success\b/gi, "lasting results"],
+    [/\bwith the right approach,?\s*/gi, ""],
+    [/\banyone can (become|master|learn|achieve)\b/gi, "you can $1"],
+    [/\bboost(s|ing)? your (?:mood|energy|productivity)\b/gi, "lift$1 your mood"],
+    [/\bbenefits both the body and (?:the )?mind\b/gi, "is good for body and head"],
+    [/\bboth the body and (?:the )?mind\b/gi, "body and head"],
+    [/\bsharpen(s|ing)? your\b/gi, "improve$1 your"],
+    [/\brewarding and enriching\b/gi, "rewarding"],
+    [/\ban? rewarding and enriching experience\b/gi, "really rewarding"],
+    [/\benriches your (?:mind|life)\b/gi, "is good for you"],
+    [/\bwell worth the effort\b/gi, "worth it"],
+    [/\bworth the effort\b/gi, "worth it"],
+    [/\bset aside time each day\b/gi, "do a bit each day"],
+    [/\bset aside time\b/gi, "make time"],
+    [/\binto your daily routine\b/gi, "into your day"],
+    [/\bopens? doors to new\b/gi, "leads to new"],
+    [/\byou'?ll soon notice\b/gi, "you'll notice"],
+    [/\bone of the simplest ways to\b/gi, "an easy way to"],
+    [/\bthe simplest ways? to\b/gi, "an easy way to"],
+    [/\bplays? a central role in\b/gi, "matters a lot for"],
+    [/\ba powerful advantage\b/gi, "a real edge"],
+    [/\bto improve your life\b/gi, "to feel better"],
+    [/\bimprove your life\b/gi, "make life better"],
+    [/\ba rewarding (?:and \w+ )?experience\b/gi, "really rewarding"],
+    [/\brewarding experience\b/gi, "fun to do"],
   ];
 
   // Antithesis templates AI overuses: "not just X, but Y", "It's not X, it's Y".
@@ -177,20 +238,70 @@
   // sentences flow as prose. Connectors vary so it doesn't read templated.
   const SEQUENCE_OPENERS =
     /^(first(?:ly)?|second(?:ly)?|third(?:ly)?|fourth(?:ly)?|fifth(?:ly)?|next|then|finally|lastly|to begin with|to start)\b[,:]?\s*/i;
-  const FLOW_CONNECTORS = ["", "", "Then ", "After that, ", "Also, "];
+  // Connectors used when stripping "First,/Second,/Next," scaffolding. We avoid
+  // "After that,"/"Then," here because the detector (correctly) reads them as
+  // sequence/ordinal openers — re-introducing them would just trade one
+  // enumeration tell for another. Bare drops + an occasional "And " keep flow.
+  const FLOW_CONNECTORS = ["", "", "", "And ", "Plus "];
   function deEnumerate(sentences, rnd) {
     let seq = 0;
+    let prevConn = null;            // avoid repeating the same connector in a row
     return sentences.map((s, i) => {
       let out = s.replace(/^\s*\d+[.)]\s+/, ""); // drop "1. " / "2) "
       if (SEQUENCE_OPENERS.test(out)) {
         out = out.replace(SEQUENCE_OPENERS, "");
         // Occasionally weave in a light connector instead of a bare drop, so a
         // long stripped list doesn't become a flat run of identical openings.
-        const conn = FLOW_CONNECTORS[Math.floor((rnd ? rnd(i) : 0) * FLOW_CONNECTORS.length)];
+        // Re-roll if we'd repeat the previous connector back-to-back.
+        let conn = FLOW_CONNECTORS[Math.floor((rnd ? rnd(i) : 0) * FLOW_CONNECTORS.length)];
+        if (conn && conn === prevConn) {
+          conn = FLOW_CONNECTORS[Math.floor((rnd ? rnd(i + 37) : 0) * FLOW_CONNECTORS.length)];
+        }
+        prevConn = conn || prevConn;
         out = conn + (conn ? out.charAt(0).toLowerCase() + out.slice(1)
                            : out.charAt(0).toUpperCase() + out.slice(1));
         seq++;
       }
+      return out;
+    });
+  }
+
+  // De-participialize AI's favorite sentence openers: "Having established X, Y",
+  // "By doing X, Y", "Leveraging X, Y", "When it comes to X, Y". These read as a
+  // strong GPT fingerprint. We rewrite the leading participial/gerund phrase into
+  // a plain clause so the sentence starts with its real subject.
+  function deParticipialize(sentences) {
+    return sentences.map((s) => {
+      let out = s;
+      // "By doing X, <clause>" -> turn the gerund phrase into the subject.
+      // If the trailing clause already has its own subject ("organizations can…"),
+      // just promote the gerund ("Doing X helps organizations…" would need a verb,
+      // so keep it simple: "Doing X. <clause>" reads wrong) — instead drop "By"
+      // and join with "and": "Doing X, and organizations can…" still clunky, so
+      // we special-case: bare-verb clause -> "lets you"; subject-led clause ->
+      // keep the gerund as subject and connect with a comma + the clause as-is.
+      out = out.replace(/^(\s*)by\s+(\w+ing\b[^,]*),\s+(.*)$/i, (m, sp, phrase, tail) => {
+        // If the tail is a full clause with its own subject, move the "by …"
+        // phrase to the END (always grammatical): "By X, S can Y" -> "S can Y by X".
+        const subjectLed = /^(?:you|we|they|it|this|that|these|those|he|she|i|the\s+\w+|\w+s)\s+\w/i.test(tail);
+        if (subjectLed) {
+          const t = tail.replace(/[.!?]+$/, "");
+          return `${sp}${t.charAt(0).toUpperCase() + t.slice(1)} by ${phrase}. `;
+        }
+        // Bare-verb tail ("By X, do Y") -> "Xing … lets you do Y".
+        const G = phrase.charAt(0).toUpperCase() + phrase.slice(1);
+        return `${sp}${G} lets you ${tail}`;
+      });
+      // "Having <verbed> X, Y" -> "Once you <verb> X, Y" (rough but plainer).
+      out = out.replace(/^(\s*)having\s+(\w+?)(?:ed|en)\b([^,]*),\s+/i,
+        (m, sp, verb, rest) => `${sp}Once you ${verb}${rest}, `);
+      // "Leveraging/Using/Focusing X, Y" -> "With X, Y" when the gerund is a
+      // generic vehicle verb; otherwise leave it.
+      out = out.replace(/^(\s*)(?:leveraging|utilizing|using|harnessing|employing)\s+([^,]{2,40}),\s+/i,
+        (m, sp, obj) => `${sp}With ${obj}, `);
+      // "When it comes to X, Y" -> "For X, Y"
+      out = out.replace(/^(\s*)when it comes to\s+([^,]{2,40}),\s+/i,
+        (m, sp, obj) => `${sp}For ${obj}, `);
       return out;
     });
   }
@@ -396,22 +507,29 @@
   // Real burstiness needs BOTH long and short sentences. varyLength() only
   // splits; this merges some adjacent short sentences with a connector so the
   // rhythm isn't a flat run of medium-length lines.
-  const MERGE_JOINS = [", and ", ", so ", " — ", ", but "];
+  const MERGE_JOINS = [", and ", ", so ", ", then ", ", but "];
   function mergeShort(sentences, rnd) {
     const out = [];
+    let lastMerged = false;        // don't merge two pairs back-to-back
     for (let i = 0; i < sentences.length; i++) {
       const a = sentences[i], b = sentences[i + 1];
       const aLen = a ? a.split(/\s+/).length : 0;
       const bLen = b ? b.split(/\s+/).length : 0;
-      // Merge two consecutive short sentences ~half the time.
-      if (b && aLen <= 9 && bLen <= 11 && rnd(i) < 0.5) {
+      // Merge two consecutive short/medium sentences. Higher probability and a
+      // slightly larger window than before so flat runs of step-by-step lines
+      // (a strong enumeration tell) get woven into longer, bursty sentences.
+      // Skip if the previous pair was just merged, so we still keep SOME short
+      // sentences (real burstiness needs both long and short).
+      if (b && aLen <= 12 && bLen <= 13 && !lastMerged && rnd(i) < 0.7) {
         const join = MERGE_JOINS[Math.floor(rnd(i + 100) * MERGE_JOINS.length)];
-        let head = a.replace(/[.!?]+$/, "");
-        let tail = b.charAt(0).toLowerCase() + b.slice(1);
+        const head = a.replace(/[.!?]+$/, "");
+        const tail = b.charAt(0).toLowerCase() + b.slice(1);
         out.push(head + join + tail);
+        lastMerged = true;
         i++; // consumed b
       } else {
         out.push(a);
+        lastMerged = false;
       }
     }
     return out;
@@ -501,12 +619,42 @@
     });
   }
 
+  // Clean up connector collisions our passes can leave when a merge join (", so ")
+  // lands next to a de-enumeration connector ("Also, "/"Then "), or when two
+  // connectors stack. e.g. ", so also," / ", and also," / "Also, also," -> one.
+  function fixConnectors(text) {
+    let out = text;
+    // ", so also," / ", and also," / ", but also," -> drop the redundant "also,"
+    out = out.replace(/,\s*(so|and|but)\s+also,\s*/gi, ", $1 ");
+    // "X and also, Y" / "X, and also Y" -> "X and Y" (merge-join + connector).
+    out = out.replace(/\s+and\s+also,?\s+/gi, " and ");
+    // Sentence-initial "Also," that our merge/transition passes can leave -> drop
+    // when it directly follows another short connector-led sentence; otherwise
+    // soften a leading "Also," to "Plus," occasionally is overkill — just keep one.
+    out = out.replace(/([.!?]\s+)Also,\s+(?=[A-Z])/g, "$1");
+    // Stacked leading connectors: "Also, Then" / "Then, also" -> first only.
+    out = out.replace(/\b(Also|Then|Plus|After that),\s+(also|then|plus),?\s+/gi, "$1, ");
+    // A bare ", also, X" mid-sentence reads clumsy -> ", and X".
+    out = out.replace(/,\s*also,\s*/gi, ", and ");
+    // "so also " at a sentence start -> "So ".
+    out = out.replace(/(^|[.!?]\s+)so\s+also\b,?\s*/gi, "$1So ");
+    // Merge-join + flow-connector collisions: ", so plus ", ", and plus ",
+    // ", but plus ", ", so and " -> keep the first connector only.
+    out = out.replace(/,\s*(so|and|but|then)\s+(plus|and|then)\b\s*/gi, ", $1 ");
+    // De-dup a run of identical sentence-initial "And "/"Plus " openers: if two
+    // sentences in a row start with the same connector, drop it on the second.
+    out = out.replace(/((?:^|[.!?]\s+)(And|Plus|Then|So)\s)([^.!?]*[.!?]\s+)\2\s/g,
+      (m, first, conn, mid) => first + mid);
+    return out;
+  }
+
   function tidy(text) {
-    return fixArticles(text)
+    return fixConnectors(fixArticles(text))
       .replace(/\s+([.,!?;:])/g, "$1")
       .replace(/([.,!?;:])(?=[^\s"')\]])/g, "$1 ")
       .replace(/\s{2,}/g, " ")
       .replace(/\.{2,}/g, ".")
+      .replace(/,\s*,/g, ",")
       .replace(/^\s+|\s+$/g, "");
   }
 
@@ -574,6 +722,7 @@
 
     let sentences = splitSentences(t);
     sentences = deEnumerate(sentences, rnd); // strip First,/Second,/numbering
+    sentences = deParticipialize(sentences); // "By doing X,…"/"Having X,…" -> plain
     sentences = thinTransitions(sentences);
     sentences = varyOpeners(sentences);   // break repeated sentence openers
 

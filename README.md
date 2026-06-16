@@ -9,6 +9,9 @@ makes it smarter the more you use it.
 ```
 Orchestrator (agents.js)
   ├─ summarizer   — summarize / Q&A on the current page
+  ├─ pageChat     — chat with the page/article + reading time & key takeaways
+  ├─ writer       — fix grammar, change tone, humanize selected text
+  ├─ translator   — translate selection or page to any language
   ├─ organizer    — group, dedupe, close tabs
   ├─ researcher   — explain selection, build a research log
   ├─ focus        — time-on-site coaching
@@ -86,10 +89,25 @@ with a fixed, audited whitelist (`fetchText/Json`, `queryTabs`, `extract`,
 ## Features
 
 - **Summarize / ask** about any page
+- **Ask this page** — chat with the article (grounded answers + follow-ups), with
+  auto reading-time and key-takeaways on the first turn
+- **Writing tools** — select text anywhere, then fix grammar, make it concise,
+  shift tone (professional / casual / friendly), or **humanize** it. Available as
+  one-tap chips in the popup *and* as right-click context-menu actions that show
+  the result in an inline bubble on the page (with copy) — no tab switch.
+- **Translate** — selection or whole page into 12 languages, from the popup or a
+  right-click menu.
 - **Organize tabs** — auto-group by topic, close duplicates
 - **Research** — highlight text, get explanations + follow-ups, saved to a log
 - **Focus** — per-domain time tracking + gentle nudges
+- **Humanizer + AI detector** — full two-panel tool bundled in (see below)
 - **Self-improvement** — retrospective insights stored and reused
+
+### Right-click menu
+
+Select text on any page → **Smart Assistant** → Fix grammar · Make concise ·
+Make professional · Humanize · Explain this · Translate → Spanish/English · or
+open the full Humanizer + Detector. Results appear in a draggable inline card.
 
 ## Files
 

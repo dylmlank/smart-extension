@@ -35,15 +35,27 @@ function renderMd(text) {
     .replace(/\n/g, "<br>");
 }
 
-async function run(task) {
-  out.textContent = "Thinking…";
-  prov.textContent = "";
-  let payload = {};
+const copyBtn = document.getElementById("copyOut");
+let lastOutput = "";
+
+// Grab the current page selection (if any) so writing/translate tools act on it.
+async function getSelection() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     const sel = await chrome.tabs.sendMessage(tab.id, { type: "getSelection" }).catch(() => null);
-    if (sel?.selection) payload.selection = sel.selection;
-  } catch {}
+    return sel?.selection || "";
+  } catch { return ""; }
+}
+
+async function run(task, extra = {}) {
+  out.textContent = "Thinking…";
+  prov.textContent = "";
+  copyBtn.style.display = "none";
+  let payload = { ...extra };
+  if (!payload.selection) {
+    const selection = await getSelection();
+    if (selection) payload.selection = selection;
+  }
 
   const res = await chrome.runtime.sendMessage({ type: "task", task, payload, history });
 
@@ -52,9 +64,12 @@ async function run(task) {
   lastAgent = res.agent || lastAgent;
 
   const answer = res.output || res.error || "(no response)";
+  lastOutput = answer;
   out.innerHTML = renderMd(answer);
+  if (!res.error && answer && answer !== "(no response)") copyBtn.style.display = "";
   prov.textContent = res.agent
-    ? `${res.agent}${res.provider ? " · " + res.provider : ""}` +
+    ? `${res.agent}${res.meta ? " · " + res.meta : ""}${res.lang ? " · " + res.lang : ""}` +
+      `${res.provider ? " · " + res.provider : ""}` +
       (typeof res.confidence === "number" ? ` · ${Math.round(res.confidence * 100)}%` : "")
     : "";
 
@@ -88,6 +103,37 @@ document.getElementById("openHumanizer").onclick = () => {
 
 document.getElementById("go").onclick = () => taskIn.value && run(taskIn.value);
 taskIn.addEventListener("keydown", e => { if (e.key === "Enter" && taskIn.value) run(taskIn.value); });
+
+// Writing tools: each chip rewrites the current selection in a chosen style.
+const STYLE_LABEL = {
+  fix: "Fix grammar", concise: "Make concise", professional: "Make professional",
+  casual: "Make casual", humanize: "Humanize",
+};
+document.querySelectorAll("#writeChips button").forEach(b => {
+  b.onclick = async () => {
+    const selection = await getSelection();
+    if (!selection) { out.textContent = "Select some text on the page first, then click a writing tool."; return; }
+    resetChat();
+    run(STYLE_LABEL[b.dataset.style] || "Rewrite this", { selection, style: b.dataset.style });
+  };
+});
+
+// Translate the selection (or the page) into the chosen language.
+document.getElementById("translateBtn").onclick = async () => {
+  const lang = document.getElementById("lang").value;
+  const selection = await getSelection();
+  resetChat();
+  run(`Translate this to ${lang}`, { selection, lang });
+};
+
+// Copy the last output to the clipboard.
+copyBtn.onclick = async () => {
+  try {
+    await navigator.clipboard.writeText(lastOutput);
+    copyBtn.textContent = "✓ Copied";
+    setTimeout(() => (copyBtn.textContent = "⧉ Copy"), 1200);
+  } catch { copyBtn.textContent = "✗"; }
+};
 
 document.getElementById("tools").onclick = async e => {
   e.preventDefault();

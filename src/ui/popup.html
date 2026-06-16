@@ -38,6 +38,22 @@
            min-height: 40px; white-space: pre-wrap; font-size: 13px; line-height: 1.5; max-height: 280px; overflow:auto; }
     .meta { color: var(--muted); font-size: 11px; padding: 0 14px 10px; }
     a { color: var(--accent); }
+    .section { padding: 0 14px 10px; }
+    .section-title { font-size: 11px; color: var(--muted); margin: 2px 0 6px; font-weight: 600; }
+    .section-title .hint { font-weight: 400; opacity: .8; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .chips button { background: var(--card); border: 1px solid var(--border); color: var(--fg);
+            border-radius: 999px; padding: 5px 10px; cursor: pointer; font-size: 12px; }
+    .chips button:hover { border-color: var(--accent); }
+    .trow { display: flex; gap: 6px; }
+    #lang { flex: 1; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border);
+            background: var(--bg); color: var(--fg); font-size: 13px; }
+    #translateBtn { background: var(--accent); color: #fff; border: none; border-radius: 8px;
+            padding: 0 12px; cursor: pointer; font-size: 13px; }
+    #copyOut { display: none; float: right; background: var(--card); color: var(--fg);
+            border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px;
+            cursor: pointer; font-size: 11px; margin: -2px 0 4px 6px; }
+    #copyOut:hover { border-color: var(--accent); }
   </style>
 </head>
 <body>
@@ -46,11 +62,36 @@
     <button id="theme">🌙</button>
   </header>
   <div class="quick">
-    <button data-task="Summarize this page">📄 Summarize</button>
+    <button data-task="Give me the gist and key takeaways of this page">📄 Summarize</button>
+    <button data-task="Ask this page a question">💬 Ask this page</button>
     <button data-task="Organize and group my tabs by topic">🗂️ Organize tabs</button>
-    <button data-task="Explain the selected text">🔍 Research</button>
     <button data-task="How is my focus today?">🎯 Focus check</button>
   </div>
+
+  <div class="section">
+    <div class="section-title">✍️ Writing tools <span class="hint">(works on selected text)</span></div>
+    <div class="chips" id="writeChips">
+      <button data-style="fix">Fix grammar</button>
+      <button data-style="concise">Make concise</button>
+      <button data-style="professional">Professional</button>
+      <button data-style="casual">Casual</button>
+      <button data-style="humanize">Humanize</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">🌐 Translate <span class="hint">(selection or page)</span></div>
+    <div class="trow">
+      <select id="lang">
+        <option>Spanish</option><option>French</option><option>German</option>
+        <option>Italian</option><option>Portuguese</option><option>Chinese</option>
+        <option>Japanese</option><option>Korean</option><option>Arabic</option>
+        <option>Hindi</option><option>Russian</option><option>English</option>
+      </select>
+      <button id="translateBtn">Translate →</button>
+    </div>
+  </div>
+
   <div class="quick" style="padding-top:0">
     <button id="openHumanizer" style="grid-column:1 / -1">✦ Humanize AI &amp; Detector</button>
   </div>
@@ -60,6 +101,7 @@
     <input id="task" placeholder="Ask anything…" />
     <button id="go">→</button>
   </div>
+  <button id="copyOut" title="Copy output">⧉ Copy</button>
   <div id="out">Pick an action or type a request.</div>
   <div class="meta"><span id="prov"></span> · <a href="#" id="opts">Settings</a> · <a href="#" id="retro">Reflect now</a></div>
   <script type="module" src="popup.js"></script>

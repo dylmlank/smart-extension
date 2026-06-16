@@ -70,32 +70,31 @@
   // transitions from highly-concentrated words are the strongest AI tell).
   // Higher average = lower perplexity = more AI-like.
   function predictability(text) {
-    const filler = fillerDensity(text);
+    // NOTE: the raw bigram-match signal turned out to be INVERTED on real data.
+    // The table is built from human literary corpora (Brown/Reuters/Gutenberg),
+    // so genuine human prose matches its common transitions MORE than generic
+    // AI prose does — the opposite of the perplexity intuition. Measured on the
+    // labeled set: AI bigram-avg 0.19 vs human 0.27 (separation -0.08). So we no
+    // longer use the bigram match as an AI signal; the FILLER-construction
+    // density is the precise, correctly-signed part (AI 0.30 vs human 0.00) and
+    // now carries the signal on its own.
+    return clamp(fillerDensity(text), 0, 1);
+  }
+
+  // Raw bigram-match average, exposed for analysis/tuning only. Not used as an
+  // AI signal (see predictability() above — it's inverted on real data).
+  function bigramMatch(text) {
     const ws = tok(text);
-    if (!HAS_TABLE || ws.length < 12) {
-      // No table (or too short): fall back to the precise filler signal alone.
-      return clamp(filler * 0.9, 0, 1);
-    }
+    if (!HAS_TABLE || ws.length < 12) return null;
     let scoreSum = 0, considered = 0;
     for (let i = 0; i < ws.length - 1; i++) {
       const e = TABLE[ws[i]];
-      if (!e) continue;                 // only judge pairs we have data for
+      if (!e) continue;
       considered++;
-      if (e.n.indexOf(ws[i + 1]) !== -1) {
-        // Hit: weight by how concentrated this word's continuations are.
-        // m ranges ~0.05 (the) .. ~0.6 (of/such); scale to emphasize high-m.
-        scoreSum += 0.5 + e.m;          // 0.55 .. ~1.1 per predictable hit
-      }
+      if (e.n.indexOf(ws[i + 1]) !== -1) scoreSum += 0.5 + e.m;
     }
-    if (considered < 5) return clamp(filler * 0.9, 0, 1);
-    // Average predictable-hit weight across judged pairs. Human prose lands
-    // ~0.10-0.22; generic AI prose ~0.28-0.45. Map that band to 0..1.
-    const avg = scoreSum / considered;
-    const bigramSig = clamp((avg - 0.14) / 0.22, 0, 1);
-
-    // Combine with filler density (precise, complementary). Either can flag.
-    return clamp(Math.max(bigramSig * 0.85 + filler * 0.4, filler * 0.9), 0, 1);
+    return considered < 5 ? null : scoreSum / considered;
   }
 
-  global.Predictability = { predictability, fillerDensity, HAS_TABLE };
+  global.Predictability = { predictability, fillerDensity, bigramMatch, HAS_TABLE };
 })(typeof window !== "undefined" ? window : globalThis);

@@ -274,6 +274,88 @@
     return clamp(score / 6, 0, 1);
   }
 
+  // ---- Participial / adverbial sentence openers ----
+  // A distinctive GPT fingerprint is opening sentences with a participial or
+  // prepositional-gerund phrase ("Leveraging X, you can...", "By doing Y,...",
+  // "Having established Z,...", "When it comes to...") and with sentence-initial
+  // stance adverbs ("Importantly,", "Notably,", "Ultimately,"). Humans do this
+  // occasionally; AI stacks them. Returns 0..1 on the share of such openers.
+  const PARTICIPIAL_OPENER =
+    /^[\s"']*(?:by\s+\w+ing|when\s+it\s+comes\s+to|having\s+\w+ed|\w+ing\b[^,]{0,40},|with\s+\w+\s+in\s+mind)/i;
+  const ADVERB_OPENER = new Set([
+    "importantly", "notably", "ultimately", "essentially", "fundamentally",
+    "interestingly", "crucially", "significantly", "remarkably", "undoubtedly",
+    "arguably", "naturally", "clearly", "indeed", "moreover", "furthermore",
+    "additionally", "consequently", "similarly", "specifically", "generally",
+  ]);
+  function openerStyleSignal(sents) {
+    if (sents.length < 3) return 0;
+    let hits = 0;
+    for (const s of sents) {
+      if (PARTICIPIAL_OPENER.test(s)) { hits++; continue; }
+      const m = s.toLowerCase().match(/^[\s"']*([a-z]+),/);
+      if (m && ADVERB_OPENER.has(m[1])) hits++;
+    }
+    // 2+ such openers in a passage is a strong, distinctive pattern.
+    return clamp((hits - 0.5) / Math.max(2, sents.length * 0.45), 0, 1);
+  }
+
+  // ---- Uniform comma cadence ----
+  // AI prose tends to place commas at a steady rate and build long, evenly
+  // sub-claused sentences. Humans cluster commas (lists, asides) then go bare.
+  // We measure the spread of commas-per-sentence: LOW spread + nonzero rate is
+  // AI-like; high spread (some bare, some comma-heavy) is human-like.
+  function commaCadence(sents) {
+    if (sents.length < 4) return 0;
+    const counts = sents.map((s) => (s.match(/,/g) || []).length);
+    const mean = counts.reduce((a, b) => a + b, 0) / counts.length;
+    if (mean < 0.5) return 0;            // few commas overall — no signal
+    const variance = counts.reduce((a, b) => a + (b - mean) ** 2, 0) / counts.length;
+    const cv = Math.sqrt(variance) / mean;
+    // Low CV (uniform comma use) with a meaningful rate reads AI. cv ~0.4 is
+    // very uniform; cv ~1.0+ is human-clustered.
+    return clamp((0.85 - cv) / 0.7, 0, 1);
+  }
+
+  // ---- Generic-advice abstraction ----
+  // Structurally, smooth AI "advice/explainer" prose is indistinguishable from
+  // formal human exposition: both lack contractions, use even rhythm, and lean
+  // on formal punctuation. The real discriminator is CONCRETENESS. Human facts
+  // name specific entities (glucose, Lehman Brothers, 1648); generic AI advice
+  // stays abstract and motivational ("transform your life", "the key is", "over
+  // time", "your future self"). This counts that abstract self-help register —
+  // a correctly-signed tell that fires on the AI advice the structural signals
+  // miss, and stays near zero on concrete human writing.
+  // Tight list of self-help / motivational register markers. Deliberately
+  // excludes phrases that also appear in concrete instructional or factual prose
+  // ("over time", "regardless of", "long-term", "the key is") — those caused
+  // false positives on recipes and science writing. Each entry here is a phrase
+  // that, in clusters, signals abstract AI advice specifically.
+  const ADVICE_PHRASES = [
+    "transform your life", "transform your", "your future self", "your journey",
+    "in countless ways", "countless ways", "worthwhile investment",
+    "long-term success", "with the right approach", "anyone can become",
+    "anyone can master", "boost your mood", "boost your energy",
+    "investment in your", "improve your life", "sharpen your",
+    "rewarding and enriching", "well worth the effort", "worth the effort",
+    "powerful advantage", "benefits both the body", "both the body and the mind",
+    "set aside time", "into your daily routine", "your daily routine",
+    "you'll soon notice", "you'll soon", "simplest ways to improve",
+    "one of the simplest", "enriches your",
+    "opens doors to new", "your overall wellbeing", "a rewarding and",
+  ];
+  function adviceAbstraction(text, wordCount) {
+    if (!wordCount) return 0;
+    const hits = phraseHits(text, ADVICE_PHRASES);
+    // A single advice phrase in a short passage isn't enough — these markers
+    // appear once in ordinary writing too. Require the register to actually
+    // cluster: the first hit is discounted, so the signal keys on 2+ markers (or
+    // a high density). Pure phrase density, no generic second-person term (which
+    // legitimately appears in concrete how-to writing like recipes/repairs).
+    const effective = Math.max(0, hits - 0.5);
+    return clamp((effective / wordCount) * 100 / 1.2, 0, 1);
+  }
+
   // ---- Per-sentence AI score ----
   // A lightweight per-sentence estimate so the UI can highlight the lines that
   // read most like AI. Uses the cheap, sentence-local signals.
@@ -387,34 +469,49 @@
     // each signal's AI-vs-human separation.
     const P = (typeof global !== "undefined" && global.Predictability) ||
               (typeof window !== "undefined" && window.Predictability) || null;
+    // Filler-construction density is the single best-separating data signal on
+    // the labeled set (AI ~0.30 vs human ~0.00), so it carries real weight.
+    // predictability() now == fillerDensity() (the bigram match was inverted and
+    // dropped — see predictability.js), so we surface filler alone here.
     const sigFiller = P ? P.fillerDensity(t) : 0;
-    const sigPredict = P ? P.predictability(t) : 0;
     const hasPredict = !!P;
 
+    // Participial/adverbial sentence openers ("Leveraging X,...", "Notably,...")
+    // and uniform comma cadence — two distinctive, correctly-signed AI tells.
+    const sigOpenerStyle = openerStyleSignal(sents);
+    const sigCommaCadence = commaCadence(sents);
+
+    // Generic-advice abstraction: catches smooth, buzzword-free AI advice that
+    // is structurally identical to formal human exposition. The discriminator
+    // is concreteness — abstract motivational "advice" register vs. specific
+    // entities/facts. Correctly signed (high on AI advice, ~0 on human facts).
+    const sigAbstraction = adviceAbstraction(t, wordCount);
+
     const weights = [
-      [sigCliche, 0.20, "AI cliché / buzzword density", cliche.toFixed(1) + " / 100 words"],
-      [sigNoContractions, 0.14, "Contraction use", contractions + " found"],
-      [sigBurst, 0.13, "Sentence rhythm", burst > 0.5 ? "varied (human-like)" : "uniform (AI-like)"],
-      [sigEnum, 0.11, "Enumeration / tutorial voice", sigEnum > 0.3 ? "lists/steps (AI-like)" : "low"],
-      [sigCasualAI, 0.09, "Casual-AI phrases", casualAI + " (\"let's be real\"…)"],
-      [sigFiller, 0.08, "Filler constructions", sigFiller > 0.3 ? "vague hedges (AI-like)" : "low filler"],
-      [sigHedge, 0.06, "Hedging / filler", hedge.toFixed(1) + " / 100 words"],
-      [sigRepeat, 0.05, "Repeated phrasing", sigRepeat > 0.3 ? "reuses phrases (AI-like)" : "low repetition"],
-      [sigFormulaic, 0.05, "Formulaic framing", formulaic + " openers/closers"],
-      [sigThree, 0.04, "Rule-of-three lists", threes + " found"],
-      [sigOpeners, 0.04, "Repeated sentence openers", sigOpeners > 0.3 ? "same openings repeat" : "varied openings"],
-      [sigPunct, 0.03, "Punctuation profile", sigPunct > 0.4 ? "formal (AI-like)" : "informal (human-like)"],
+      [sigCliche, 0.19, "AI cliché / buzzword density", cliche.toFixed(1) + " / 100 words"],
+      [sigNoContractions, 0.13, "Contraction use", contractions + " found"],
+      [sigBurst, 0.12, "Sentence rhythm", burst > 0.5 ? "varied (human-like)" : "uniform (AI-like)"],
+      [sigFiller, 0.12, "Filler constructions", sigFiller > 0.3 ? "vague hedges (AI-like)" : "low filler"],
+      [sigEnum, 0.10, "Enumeration / tutorial voice", sigEnum > 0.3 ? "lists/steps (AI-like)" : "low"],
+      [sigCasualAI, 0.08, "Casual-AI phrases", casualAI + " (\"let's be real\"…)"],
+      [sigOpenerStyle, 0.06, "Participial / adverb openers", sigOpenerStyle > 0.3 ? "\"Leveraging X,…\" (AI-like)" : "varied"],
+      [sigAbstraction, 0.06, "Generic-advice abstraction", sigAbstraction > 0.3 ? "abstract self-help (AI-like)" : "concrete"],
+      [sigHedge, 0.04, "Hedging / filler", hedge.toFixed(1) + " / 100 words"],
+      [sigRepeat, 0.04, "Repeated phrasing", sigRepeat > 0.3 ? "reuses phrases (AI-like)" : "low repetition"],
+      [sigFormulaic, 0.04, "Formulaic framing", formulaic + " openers/closers"],
+      [sigThree, 0.03, "Rule-of-three lists", threes + " found"],
+      [sigOpeners, 0.03, "Repeated sentence openers", sigOpeners > 0.3 ? "same openings repeat" : "varied openings"],
+      [sigCommaCadence, 0.03, "Comma cadence", sigCommaCadence > 0.4 ? "uniform (AI-like)" : "clustered (human-like)"],
+      [sigPunct, 0.02, "Punctuation profile", sigPunct > 0.4 ? "formal (AI-like)" : "informal (human-like)"],
       [sigAntithesis, 0.02, "Antithesis templates", antithesisHits + " (\"not X, but Y\")"],
-      [sigPredict, 0.02, "Predictability (perplexity)", sigPredict > 0.5 ? "low perplexity (AI-like)" : "high perplexity (human-like)"],
       [sigVariety, 0.01, "Vocabulary variety", (variety * 100).toFixed(0) + "% unique"],
     ];
 
-    // Drop the data-driven signals entirely if the predictability module isn't
+    // Drop the data-driven filler signal if the predictability module isn't
     // present, so a missing table doesn't skew the score.
     if (!hasPredict) {
       for (let i = weights.length - 1; i >= 0; i--) {
-        const n = weights[i][2];
-        if (n === "Filler constructions" || n === "Predictability (perplexity)") weights.splice(i, 1);
+        if (weights[i][2] === "Filler constructions") weights.splice(i, 1);
       }
     }
 
@@ -460,12 +557,40 @@
     // explicit clichés) are NOT discounted this way.
     if (sigSpecific >= 0.4) moderate -= 1;
     if (sigSpecific >= 0.7) moderate -= 1;
-    if (moderate >= 3) score = Math.max(score, 58);
-    if (moderate >= 4) score = Math.max(score, 68);
+    // The stacked-tell floor keys on STRUCTURE (rhythm/punctuation/no-
+    // contractions), which formal human exposition shares with AI. Only apply it
+    // when at least one CONTENT tell is also present (cliché, filler, hedging,
+    // or abstract self-help register) — otherwise a concrete factual human
+    // paragraph gets floored purely for being formal. This is what keeps
+    // expository human writing (photosynthesis, history, science) off the AI list.
+    const hasContentTell = sigCliche >= 0.2 || sigFiller >= 0.3 ||
+                           sigHedge >= 0.3 || sigAbstraction >= 0.3 ||
+                           sigEnum >= 0.3;
+    if (moderate >= 3 && hasContentTell) score = Math.max(score, 58);
+    if (moderate >= 4 && hasContentTell) score = Math.max(score, 68);
+
+    // Generic-advice abstraction: smooth, buzzword-free AI advice the structural
+    // floor now (correctly) ignores still needs catching. Abstract self-help
+    // register + formal structure (no contractions / even rhythm) is the
+    // fingerprint. Require a corroborating structural signal so a concrete human
+    // paragraph that happens to say "your" a few times isn't flagged.
+    const abstractCorrob = sigNoContractions >= 0.6 || sigBurst >= 0.5 ||
+                           sigPunct >= 0.35;
+    if (sigAbstraction >= 0.4 && abstractCorrob && sigSpecific < 0.3) {
+      score = Math.max(score, 58);
+    }
+    if (sigAbstraction >= 0.65 && abstractCorrob && sigSpecific < 0.3) {
+      score = Math.max(score, 66);
+    }
 
     // Enumeration / tutorial voice is a strong, distinctive AI tell.
     if (sigEnum >= 0.5) score = Math.max(score, 60);
     if (sigEnum >= 0.75) score = Math.max(score, 70);
+
+    // Stacked participial/adverb openers ("Leveraging X,… Notably,…") rarely
+    // happen in human prose — floor when the pattern is pronounced.
+    if (sigOpenerStyle >= 0.6) score = Math.max(score, 60);
+    if (sigOpenerStyle >= 0.85) score = Math.max(score, 68);
 
     // 2+ casual-AI stock phrases in a short passage is a strong tell that
     // survives casual styling.

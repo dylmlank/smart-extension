@@ -107,6 +107,78 @@ export const AGENTS = {
     }
   },
 
+  // Rewrite, fix, or restyle a piece of text. Powers the inline writing
+  // assistant: grammar fixes, tone shifts (professional/casual/concise/friendly),
+  // expand/shorten, and "humanize". `payload.style` selects the transform;
+  // `payload.selection` (or the page text) is the input.
+  writer: {
+    desc: "Rewrite, fix grammar, or change the tone of selected text.",
+    async run(task, payload) {
+      const text = (payload?.selection || "").trim() ||
+        (await tools.getActiveTabText()).text.slice(0, 4000);
+      if (!text) return { output: "Select some text first, then try again." };
+      const style = (payload?.style || "").toLowerCase();
+      const STYLES = {
+        fix: "Fix grammar, spelling, and punctuation. Keep the meaning and voice. Return ONLY the corrected text.",
+        professional: "Rewrite in a clear, professional tone. Return ONLY the rewrite.",
+        casual: "Rewrite in a relaxed, friendly, conversational tone. Return ONLY the rewrite.",
+        concise: "Make it as concise as possible without losing meaning. Return ONLY the rewrite.",
+        expand: "Expand with more detail and clarity, staying on topic. Return ONLY the rewrite.",
+        friendly: "Rewrite to sound warm and approachable. Return ONLY the rewrite.",
+        humanize: "Rewrite to sound natural and human: vary sentence length, cut clichés and corporate filler, use light contractions. Return ONLY the rewrite.",
+      };
+      const instruction = STYLES[style] ||
+        "Improve this text: fix errors and make it clearer and more natural. Return ONLY the improved text.";
+      const sys = "You are a precise writing assistant. Output only the rewritten text, no preamble, no quotes.";
+      const { text: out, provider } = await ask(sys, `${instruction}\n\nTEXT:\n${text}`, payload?.history);
+      return { output: out.trim(), provider, style: style || "improve" };
+    }
+  },
+
+  // Translate selected text (or the page) to a target language. Detects the
+  // target from the task ("translate to Spanish") or payload.lang.
+  translator: {
+    desc: "Translate selected text or the page to another language.",
+    async run(task, payload) {
+      const text = (payload?.selection || "").trim() ||
+        (await tools.getActiveTabText()).text.slice(0, 4000);
+      if (!text) return { output: "Select text or open a page, then try again." };
+      // Pull the target language from the payload or the task wording.
+      let lang = payload?.lang;
+      if (!lang) {
+        const m = task.match(/(?:to|into|in)\s+([A-Za-z]+)\s*$/i) ||
+                  task.match(/translate\s+(?:this\s+)?(?:to|into)\s+([A-Za-z]+)/i);
+        lang = m ? m[1] : "English";
+      }
+      const sys = "You are a translator. Output ONLY the translation, preserving meaning, tone, and formatting. No notes.";
+      const { text: out, provider } = await ask(sys, `Translate the following into ${lang}:\n\n${text}`);
+      return { output: out.trim(), provider, lang };
+    }
+  },
+
+  // Chat with the current page/article: answer questions grounded in the page,
+  // with follow-ups. Richer than the summarizer — it also surfaces reading time
+  // and key takeaways on the first turn when no specific question is asked.
+  pageChat: {
+    desc: "Answer questions about the current page or article, with follow-ups.",
+    async run(task, payload) {
+      const hasHistory = payload?.history?.length;
+      let pageBlock = "", meta = "";
+      if (!hasHistory) {
+        const { text } = await tools.getActiveTabText();
+        pageBlock = `PAGE:\n${text}\n\n`;
+        const words = (text.match(/\S+/g) || []).length;
+        meta = `~${Math.max(1, Math.round(words / 220))} min read`;
+      }
+      const generic = /^(summari|key points|takeaways|tl;?dr|what'?s this|explain this page)/i.test(task.trim());
+      const sys = generic
+        ? "Read the page and reply with: a one-line gist, then 3-5 bullet key takeaways. Be specific and tight. Use only the page."
+        : "Answer the user's question using ONLY the page content. If it's not in the page, say so. Keep it tight and cite the relevant part briefly.";
+      const { text: out, provider } = await ask(sys, `${pageBlock}TASK: ${task}`, payload?.history);
+      return { output: out, provider, meta };
+    }
+  },
+
   // The self-extending agent: when no specialist fits, it CREATES a tool
   // for the task (or reuses one it built earlier) and runs it.
   builder: {
@@ -142,8 +214,11 @@ export const AGENTS = {
 // Strong keyword signals — when these clearly match, skip the LLM round-trip.
 function keywordRoute(t) {
   const tests = [
+    ["translator", /\b(translate|translation|in (?:spanish|french|german|chinese|japanese|italian|portuguese|korean|arabic|russian|hindi)|to (?:spanish|french|german|chinese|japanese|italian|portuguese|korean|arabic|russian|hindi))\b/],
+    ["writer", /\b(rewrite|reword|paraphrase|fix (?:grammar|this|the)|grammar|proofread|make.*(shorter|concise|professional|casual|friendly|formal)|change the tone|humanize)\b/],
     ["organizer", /\b(tabs?|group|organi[sz]e|declutter|close|dedup|duplicate)\b/],
     ["focus", /\b(focus|distract|time on|productiv|how am i doing|screen time)\b/],
+    ["pageChat", /\b(ask (?:this|the) page|chat with|about (?:this|the) (?:page|article)|takeaways|reading time)\b/],
     ["researcher", /\b(research|explain|what does|note|study|look ?up|tell me about)\b/],
     ["summarizer", /\b(summar|tl;?dr|key points|gist|what.*(page|article|this))\b/],
   ];
