@@ -11,7 +11,8 @@
     "bookmarks",
     "tabGroups",
     "alarms",
-    "offscreen"
+    "offscreen",
+    "contextMenus"
   ],
   "sandbox": {
     "pages": ["src/sandbox/sandbox.html"]

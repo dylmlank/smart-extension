@@ -78,3 +78,24 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     }
   }
 });
+
+// ---- Context menu: humanize selected text in the Humanize AI tab ----
+const HUMANIZE_MENU_ID = "humanize-selection";
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.contextMenus.create({
+    id: HUMANIZE_MENU_ID,
+    title: "Humanize with AI",
+    contexts: ["selection"],
+  });
+});
+
+chrome.contextMenus.onClicked.addListener(async (info) => {
+  if (info.menuItemId !== HUMANIZE_MENU_ID) return;
+  // Stash the selection so the page can pick it up immediately on load.
+  if (info.selectionText) {
+    await chrome.storage.local.set({ humanizePrefill: info.selectionText });
+  }
+  chrome.tabs.create({
+    url: chrome.runtime.getURL("src/humanizer/humanizer.html?prefill=1"),
+  });
+});

@@ -36,6 +36,10 @@ async function run(task) {
 document.querySelectorAll(".quick button").forEach(b => {
   b.onclick = () => run(b.dataset.task);
 });
+document.getElementById("openHumanizer").onclick = () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL("src/humanizer/humanizer.html") });
+};
+
 document.getElementById("go").onclick = () => taskIn.value && run(taskIn.value);
 taskIn.addEventListener("keydown", e => { if (e.key === "Enter" && taskIn.value) run(taskIn.value); });
 

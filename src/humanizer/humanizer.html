@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Humanize AI · Smart Assistant</title>
+  <link rel="stylesheet" href="humanizer.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo">✦</span> Humanize<span class="accent">AI</span>
+      <span class="tag">Smart Assistant</span></div>
+    <button id="themeToggle" class="icon-btn" title="Toggle theme">🌙</button>
+  </header>
+
+  <main class="wrap">
+    <div class="controls">
+      <div class="seg" role="tablist">
+        <button class="seg-btn active" data-mode="balanced">Balanced</button>
+        <button class="seg-btn" data-mode="simple">Simple</button>
+        <button class="seg-btn" data-mode="casual">Casual</button>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="useLLM" />
+        <span>Deep rewrite (AI)</span>
+      </label>
+    </div>
+
+    <div class="panels">
+      <div class="panel">
+        <div class="panel-head"><span>Your text</span>
+          <span class="meta"><span id="inWords">0</span> words</span></div>
+        <textarea id="input" placeholder="Paste AI text here…"></textarea>
+        <div class="panel-foot">
+          <button id="sampleBtn" class="ghost-btn">Sample</button>
+          <button id="pageBtn" class="ghost-btn">Grab page selection</button>
+          <button id="clearBtn" class="ghost-btn">Clear</button>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><span>Humanized</span>
+          <span class="meta"><span id="outWords">0</span> words</span></div>
+        <textarea id="output" placeholder="Result appears here…" readonly></textarea>
+        <div class="panel-foot">
+          <button id="copyBtn" class="ghost-btn">Copy</button>
+          <span id="status" class="status"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="action-row"><button id="humanizeBtn" class="primary-btn">Humanize</button></div>
+
+    <section class="detector">
+      <div class="detector-head"><span>AI Detector</span>
+        <div class="seg seg-sm">
+          <button class="seg-btn active" data-target="input">Your text</button>
+          <button class="seg-btn" data-target="output">Humanized</button>
+        </div>
+        <button id="detectBtn" class="ghost-btn">Check</button>
+      </div>
+      <div id="detectorBody" class="detector-body">
+        <p class="detector-empty">Run a check to estimate how AI-like the text reads.</p>
+      </div>
+    </section>
+
+    <p class="disclaimer">Estimates only. No tool can guarantee bypassing every AI detector — detectors change constantly. Use this to write more clearly, not to deceive.</p>
+  </main>
+
+  <script src="humanize.js"></script>
+  <script src="detector.js"></script>
+  <script src="render-detector.js"></script>
+  <script type="module" src="humanizer.js"></script>
+</body>
+</html>
