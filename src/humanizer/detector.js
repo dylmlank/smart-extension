@@ -78,6 +78,21 @@
     "picture this", "in today's", "in the world", "as we", "whether you're",
   ];
 
+  // "Casual AI" tells: stock conversational phrases AI uses when told to sound
+  // human/relatable. These survive contractions + informal punctuation (which
+  // otherwise read human), so they're a distinct, important signal as AI output
+  // gets more natural.
+  const CASUAL_AI_PHRASES = [
+    "let's be real", "let's be honest", "here's the thing", "here's the deal",
+    "the truth is", "let's face it", "make no mistake", "at the end of the day",
+    "isn't going anywhere", "is here to stay", "but here's", "the reality is",
+    "let's dive in", "buckle up", "spoiler alert", "plot twist", "newsflash",
+    "we've all been there", "we've got to", "we need to talk about",
+    "think about it", "and honestly", "honestly,", "trust me", "believe me",
+    "it's pretty wild", "mind-blowing", "game changer", "no-brainer",
+    "let that sink in", "you guessed it", "that's right", "and guess what",
+  ];
+
   function words(text) {
     return (text.toLowerCase().match(/[a-z']+/g) || []);
   }
@@ -203,6 +218,62 @@
     return clamp((formal - informal) / 2.5, 0, 1);
   }
 
+  // ---- Enumeration & tutorial voice ----
+  // AI loves explicit enumeration ("First,... Second,... Finally,...",
+  // "Here are 5 tips") and instructional framing ("To do X, you'll need to...,
+  // Then..., This ensures Y"). Both are strong tells humans rarely stack.
+  const ORDINAL_OPENERS = [
+    "first", "firstly", "second", "secondly", "third", "thirdly",
+    "fourth", "fifth", "next", "then", "finally", "lastly", "to begin",
+    "to start", "in addition", "furthermore", "moreover",
+  ];
+  const TUTORIAL_PATTERNS = [
+    /\bhere are \w+ (?:tips|ways|steps|reasons|things|strategies|methods|examples)\b/gi,
+    /\bto (?:do|implement|achieve|create|build|make|get|ensure) [^.,;]{2,40}?,\s*(?:you|first|start)\b/gi,
+    /\b(?:this|that|these)\s+(?:ensures?|guarantees?|provides?|allows?|enables?)\s+\w+(?:\s+and\s+\w+)?\b/gi,
+    /\byou'?ll (?:need to|want to|have to)\b/gi,
+    /\bby (?:doing|following|using|implementing) (?:this|these|the above)\b/gi,
+  ];
+
+  function enumerationSignal(sents, text, wordCount) {
+    if (!wordCount) return 0;
+    // Count sentences that open with an ordinal/sequence word.
+    let ordinalStarts = 0;
+    for (const s of sents) {
+      const m = s.toLowerCase().match(/^[\s"']*([a-z]+)/);
+      if (m && ORDINAL_OPENERS.includes(m[1])) ordinalStarts++;
+    }
+    // "1. ", "2) ", numbered list markers.
+    const numbered = (text.match(/(?:^|\n)\s*\d+[.)]\s/g) || []).length;
+    // 3+ ordinal openers (or numbered items) in a passage is a strong tell.
+    const seqScore = clamp((ordinalStarts + numbered - 1) / Math.max(2, sents.length * 0.5), 0, 1);
+
+    // Tutorial / instructional framing density.
+    let tut = 0;
+    for (const re of TUTORIAL_PATTERNS) tut += (text.match(re) || []).length;
+    const tutScore = clamp((tut / wordCount) * 100 / 1.2, 0, 1);
+
+    return clamp(Math.max(seqScore, tutScore * 0.9) * 0.6 + (seqScore + tutScore) * 0.2, 0, 1);
+  }
+
+  // ---- Human specificity (lowers false positives) ----
+  // Human writing (especially factual/expository) is dense with concrete,
+  // verifiable detail: proper nouns, numbers, dates, quotes. Generic AI prose
+  // is abstract. High specificity is evidence AGAINST AI — returns 0..1 where
+  // 1 = very specific/concrete (human-leaning). Used to DAMPEN the AI score.
+  function specificity(text, wordCount) {
+    if (!wordCount) return 0;
+    const per100 = (n) => (n / wordCount) * 100;
+    // Proper nouns: capitalized words not at sentence start (rough heuristic).
+    const properNouns = (text.match(/(?<=[a-z,]\s)[A-Z][a-z]+/g) || []).length;
+    const numbers = (text.match(/\b\d[\d,.]*\b/g) || []).length;
+    const years = (text.match(/\b(1[5-9]\d\d|20\d\d)\b/g) || []).length;
+    const quotes = (text.match(/["“][^"”]{6,}["”]/g) || []).length;
+    const score = per100(properNouns) * 0.5 + per100(numbers) * 0.7 +
+                  per100(years) * 1.5 + per100(quotes) * 2;
+    return clamp(score / 6, 0, 1);
+  }
+
   // ---- Per-sentence AI score ----
   // A lightweight per-sentence estimate so the UI can highlight the lines that
   // read most like AI. Uses the cheap, sentence-local signals.
@@ -229,14 +300,17 @@
     const ws = words(t);
     const wordCount = ws.length;
 
-    if (wordCount < 20) {
+    // Below ~12 words there's too little signal for any estimate.
+    if (wordCount < 12) {
       return {
         score: null,
         label: "Need more text",
-        note: "Paste at least ~20 words for a meaningful estimate.",
+        note: "Paste at least ~12 words for an estimate.",
         signals: [],
       };
     }
+    // 12–19 words: score it, but flag low confidence (fewer signals fire).
+    const lowConfidence = wordCount < 20;
 
     const sents = sentences(t);
 
@@ -292,6 +366,19 @@
     // Punctuation profile (formal serial commas/semicolons/colons vs. informal).
     const sigPunct = punctuationProfile(t, sents, wordCount);
 
+    // Enumeration + tutorial voice ("First,... Finally,...", "you'll need to...").
+    const sigEnum = enumerationSignal(sents, t, wordCount);
+
+    // Casual-AI stock phrases ("let's be real", "here's the thing") — catches
+    // AI that mimics a relatable human voice and so defeats the contraction/
+    // punctuation signals.
+    const casualAI = phraseHits(t, CASUAL_AI_PHRASES);
+    const sigCasualAI = clamp((casualAI / wordCount) * 100 / 1.5, 0, 1);
+
+    // Human specificity (concrete nouns/numbers/dates/quotes) — used to dampen
+    // the final score, not as an AI signal.
+    const sigSpecific = specificity(t, wordCount);
+
     // Predictability + filler. The raw bigram-frequency signal turned out to be
     // weakly discriminative on its own (AI and human prose overlap heavily), so
     // it carries a small weight. The FILLER-construction density (vague modal
@@ -305,20 +392,21 @@
     const hasPredict = !!P;
 
     const weights = [
-      [sigCliche, 0.22, "AI cliché / buzzword density", cliche.toFixed(1) + " / 100 words"],
-      [sigNoContractions, 0.16, "Contraction use", contractions + " found"],
-      [sigBurst, 0.15, "Sentence rhythm", burst > 0.5 ? "varied (human-like)" : "uniform (AI-like)"],
-      [sigFiller, 0.10, "Filler constructions", sigFiller > 0.3 ? "vague hedges (AI-like)" : "low filler"],
-      [sigHedge, 0.07, "Hedging / filler", hedge.toFixed(1) + " / 100 words"],
-      [sigRepeat, 0.06, "Repeated phrasing", sigRepeat > 0.3 ? "reuses phrases (AI-like)" : "low repetition"],
+      [sigCliche, 0.20, "AI cliché / buzzword density", cliche.toFixed(1) + " / 100 words"],
+      [sigNoContractions, 0.14, "Contraction use", contractions + " found"],
+      [sigBurst, 0.13, "Sentence rhythm", burst > 0.5 ? "varied (human-like)" : "uniform (AI-like)"],
+      [sigEnum, 0.11, "Enumeration / tutorial voice", sigEnum > 0.3 ? "lists/steps (AI-like)" : "low"],
+      [sigCasualAI, 0.09, "Casual-AI phrases", casualAI + " (\"let's be real\"…)"],
+      [sigFiller, 0.08, "Filler constructions", sigFiller > 0.3 ? "vague hedges (AI-like)" : "low filler"],
+      [sigHedge, 0.06, "Hedging / filler", hedge.toFixed(1) + " / 100 words"],
+      [sigRepeat, 0.05, "Repeated phrasing", sigRepeat > 0.3 ? "reuses phrases (AI-like)" : "low repetition"],
       [sigFormulaic, 0.05, "Formulaic framing", formulaic + " openers/closers"],
       [sigThree, 0.04, "Rule-of-three lists", threes + " found"],
       [sigOpeners, 0.04, "Repeated sentence openers", sigOpeners > 0.3 ? "same openings repeat" : "varied openings"],
-      [sigPunct, 0.04, "Punctuation profile", sigPunct > 0.4 ? "formal (AI-like)" : "informal (human-like)"],
-      [sigAntithesis, 0.03, "Antithesis templates", antithesisHits + " (\"not X, but Y\")"],
+      [sigPunct, 0.03, "Punctuation profile", sigPunct > 0.4 ? "formal (AI-like)" : "informal (human-like)"],
+      [sigAntithesis, 0.02, "Antithesis templates", antithesisHits + " (\"not X, but Y\")"],
       [sigPredict, 0.02, "Predictability (perplexity)", sigPredict > 0.5 ? "low perplexity (AI-like)" : "high perplexity (human-like)"],
       [sigVariety, 0.01, "Vocabulary variety", (variety * 100).toFixed(0) + "% unique"],
-      [sigDash, 0.01, "Em-dash regularity", dashes + " dashes"],
     ];
 
     // Drop the data-driven signals entirely if the predictability module isn't
@@ -358,7 +446,7 @@
     // these "moderate" thresholds are crossed and floor accordingly.
     // No-contractions counts only at HALF weight: third-person factual prose
     // legitimately lacks contractions, so it's a weak tell on its own.
-    const moderate =
+    let moderate =
       (sigBurst >= 0.6 ? 1 : 0) +
       (sigNoContractions >= 0.8 ? 0.5 : 0) +
       (sigPunct >= 0.35 ? 1 : 0) +
@@ -366,8 +454,36 @@
       (sigHedge >= 0.3 ? 1 : 0) +
       (sigThree >= 0.5 ? 1 : 0) +
       (sigFiller >= 0.4 ? 1 : 0);
+    // Concrete, specific writing (dates, proper nouns, quotes) is a hallmark of
+    // real human prose — it discounts the stacked-tell count so factual human
+    // essays aren't floored as AI. The genuine AI tells (filler, enumeration,
+    // explicit clichés) are NOT discounted this way.
+    if (sigSpecific >= 0.4) moderate -= 1;
+    if (sigSpecific >= 0.7) moderate -= 1;
     if (moderate >= 3) score = Math.max(score, 58);
     if (moderate >= 4) score = Math.max(score, 68);
+
+    // Enumeration / tutorial voice is a strong, distinctive AI tell.
+    if (sigEnum >= 0.5) score = Math.max(score, 60);
+    if (sigEnum >= 0.75) score = Math.max(score, 70);
+
+    // 2+ casual-AI stock phrases in a short passage is a strong tell that
+    // survives casual styling.
+    if (casualAI >= 2) score = Math.max(score, 62);
+    if (casualAI >= 3) score = Math.max(score, 72);
+
+    // Specificity damping: concrete human writing is evidence against AI. Pull
+    // the score down when specificity is high and the STRONG AI tells (filler,
+    // enumeration) are absent. We allow some cliché here because formal human
+    // prose uses words like "fundamentally"/"established" too. Capped so real
+    // AI can't hide behind a single statistic.
+    if (sigSpecific > 0.35 && sigFiller < 0.4 && sigEnum < 0.4 && phraseCliche < 2) {
+      const reduce = Math.min(26, sigSpecific * 34);
+      score -= reduce;
+    }
+
+    // Short-text: with fewer signals, pull toward the middle (less confident).
+    if (lowConfidence) score = Math.round(score * 0.85 + 8);
 
     score = Math.round(clamp(score, 1, 99));
 
@@ -387,7 +503,7 @@
       score: Math.round(scoreSentence(s) * 100),
     }));
 
-    return { score, label, signals, wordCount, perSentence };
+    return { score, label, signals, wordCount, perSentence, lowConfidence };
   }
 
   global.Detector = { detect };

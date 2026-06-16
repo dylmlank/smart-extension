@@ -46,6 +46,21 @@
     [/\bdemonstrate\b/gi, "show"],
     [/\bencompasses\b/gi, "includes"],
     [/\bmultifaceted\b/gi, "complex"],
+    // Casual-AI stock phrases — strip the conversational scaffolding.
+    [/\blet'?s be (?:real|honest)\b,?\s*/gi, ""],
+    [/\bhere'?s the (?:thing|deal)\b:?\s*/gi, ""],
+    [/\blet'?s face it\b,?\s*/gi, ""],
+    [/\bmake no mistake\b,?\s*/gi, ""],
+    [/\bat the end of the day\b,?\s*/gi, ""],
+    [/\bthe (?:truth|reality) is\b,?\s*/gi, ""],
+    [/\bwe'?ve got to\b/gi, "we should"],
+    [/\bisn'?t going anywhere\b/gi, "is here"],
+    [/\bit'?s pretty wild\b/gi, "it's strange"],
+    [/\btrust me\b,?\s*/gi, ""],
+    [/\bbelieve me\b,?\s*/gi, ""],
+    [/\bbuckle up\b,?\s*/gi, ""],
+    [/\band honestly\b,?/gi, ""],
+    [/\bhonestly\b,\s*/gi, ""],
     // More AI buzzwords -> plain words.
     [/\bdelve into\b/gi, "look at"],
     [/\bdelving into\b/gi, "looking at"],
@@ -145,9 +160,39 @@
       const re = new RegExp("(^|[.!?]\\s+)" + lead.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ",?\\s+", "gi");
       out = out.replace(re, "$1");
     }
+    // "Here are N tips/ways/steps for X." opener — drop the framing sentence.
+    out = out.replace(/(^|[.!?]\s+)here are \w+ (?:tips|ways|steps|reasons|things|strategies|methods)\b[^.!?]*[.!?]\s*/gi, "$1");
+    // Tutorial closer: "This (practice) ensures/guarantees X." — drop it.
+    out = out.replace(/\b(?:this|that|these|the above)(?:\s+\w+){0,2}\s+(?:ensures?|guarantees?|provides?|delivers?)\s+[^.!?]*[.!?]/gi, "");
+    // "you'll want/need/have to" tutorial hedge -> plain imperative.
+    out = out.replace(/\byou'?ll (?:want|need|have) to\b/gi, "");
     // Re-capitalize sentence starts we may have exposed.
     out = out.replace(/(^|[.!?]\s+)([a-z])/g, (m, p, c) => p + c.toUpperCase());
     return out;
+  }
+
+  // De-enumerate: strip the explicit "First,/Second,/Next,/Finally,/Lastly,"
+  // scaffolding and "1./2)" numbering that makes listicles read as AI. The
+  // content stays; only the mechanical sequence markers go, which lets the
+  // sentences flow as prose. Connectors vary so it doesn't read templated.
+  const SEQUENCE_OPENERS =
+    /^(first(?:ly)?|second(?:ly)?|third(?:ly)?|fourth(?:ly)?|fifth(?:ly)?|next|then|finally|lastly|to begin with|to start)\b[,:]?\s*/i;
+  const FLOW_CONNECTORS = ["", "", "Then ", "After that, ", "Also, "];
+  function deEnumerate(sentences, rnd) {
+    let seq = 0;
+    return sentences.map((s, i) => {
+      let out = s.replace(/^\s*\d+[.)]\s+/, ""); // drop "1. " / "2) "
+      if (SEQUENCE_OPENERS.test(out)) {
+        out = out.replace(SEQUENCE_OPENERS, "");
+        // Occasionally weave in a light connector instead of a bare drop, so a
+        // long stripped list doesn't become a flat run of identical openings.
+        const conn = FLOW_CONNECTORS[Math.floor((rnd ? rnd(i) : 0) * FLOW_CONNECTORS.length)];
+        out = conn + (conn ? out.charAt(0).toLowerCase() + out.slice(1)
+                           : out.charAt(0).toUpperCase() + out.slice(1));
+        seq++;
+      }
+      return out;
+    });
   }
 
   // De-duplicate repeated sentence openers: if several sentences in a row start
@@ -528,6 +573,7 @@
     t = rotateSynonyms(t, rnd); // vary common-word swaps run to run
 
     let sentences = splitSentences(t);
+    sentences = deEnumerate(sentences, rnd); // strip First,/Second,/numbering
     sentences = thinTransitions(sentences);
     sentences = varyOpeners(sentences);   // break repeated sentence openers
 
