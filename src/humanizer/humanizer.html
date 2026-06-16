@@ -21,8 +21,12 @@
         <button class="seg-btn" data-mode="casual">Casual</button>
       </div>
       <label class="toggle">
-        <input type="checkbox" id="useLLM" />
+        <input type="checkbox" id="useLLM" checked />
         <span>Deep rewrite (AI)</span>
+      </label>
+      <label class="toggle">
+        <input type="checkbox" id="untilUndetectable" checked />
+        <span>Loop until undetectable</span>
       </label>
     </div>
 
@@ -69,6 +73,7 @@
   <script src="humanize.js"></script>
   <script src="detector.js"></script>
   <script src="render-detector.js"></script>
+  <script src="humanize-loop.js"></script>
   <script type="module" src="humanizer.js"></script>
 </body>
 </html>

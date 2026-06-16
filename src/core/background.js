@@ -81,6 +81,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 
 // ---- Context menu: humanize selected text in the Humanize AI tab ----
 const HUMANIZE_MENU_ID = "humanize-selection";
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
     id: HUMANIZE_MENU_ID,

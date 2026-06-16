@@ -73,37 +73,74 @@ $("pageBtn").onclick = async () => {
   }
 };
 
+const RULES =
+  " Keep it concise and simple. Short, plain sentences with varied length. " +
+  "Do NOT use hyphens or dashes of any kind. Cut filler and AI cliches. " +
+  "Keep the meaning. Output only the rewrite.";
 const PROMPTS = {
-  balanced: "Rewrite to sound natural and human. Vary sentence length, cut filler and AI cliches, keep the meaning. Output only the rewrite.",
-  simple: "Rewrite in plain, simple language a person would use. Short clear sentences. Keep meaning. Output only the rewrite.",
-  casual: "Rewrite in a casual, conversational human tone. Contractions, varied rhythm, no corporate filler. Keep meaning. Output only the rewrite.",
+  balanced: "Rewrite to sound natural and human." + RULES,
+  simple: "Rewrite in plain, simple language a person would use." + RULES,
+  casual: "Rewrite in a casual, conversational human tone with contractions." + RULES,
 };
+
+// Wrap the extension's chat() into the (systemPrompt, userText) shape the loop wants.
+async function llmRewrite(systemPrompt, userText) {
+  const { text } = await chat([
+    { role: "system", content: systemPrompt },
+    { role: "user", content: userText },
+  ]);
+  return text || "";
+}
 
 const btn = $("humanizeBtn");
 btn.onclick = async () => {
   const text = input.value.trim();
   if (!text) { setStatus("Paste some text first", 2000); return; }
 
-  let result = window.Humanizer.humanize(text, mode);
+  const useLLM = $("useLLM").checked;
+  const loop = $("untilUndetectable").checked;
 
-  if ($("useLLM").checked) {
-    btn.disabled = true;
-    setStatus("Deep rewriting…");
-    try {
-      const { text: out, provider } = await chat([
-        { role: "system", content: PROMPTS[mode] },
-        { role: "user", content: text },
-      ]);
-      if (out && out.trim()) {
-        result = out.trim();
-        setStatus("Done · " + provider, 2500);
-      } else setStatus("Empty AI reply — used local", 2500);
-    } catch {
-      setStatus("AI unavailable — used local rewrite", 2500);
-    } finally {
-      btn.disabled = false;
+  btn.disabled = true;
+  let result;
+
+  try {
+    if (loop) {
+      // Iterate until the detector reads human (or max rounds).
+      const res = await window.loopHumanize(text, {
+        mode,
+        target: 30,
+        maxRounds: useLLM ? 5 : 3,
+        llm: useLLM ? llmRewrite : null,
+        onRound: (info) => {
+          output.value = info.text;
+          outWords.textContent = wc(info.text);
+          setStatus(`Round ${info.round + 1} · ${info.via} · score ${info.score}`);
+        },
+      });
+      result = res.text;
+      setStatus(
+        res.hitTarget
+          ? `Undetectable ✓ (${res.score}% AI, ${res.rounds} rounds)`
+          : `Best effort: ${res.score}% AI after ${res.rounds} rounds`,
+        4000
+      );
+    } else {
+      result = window.Humanizer.humanize(text, mode);
+      if (useLLM) {
+        setStatus("Deep rewriting…");
+        try {
+          const out = await llmRewrite(PROMPTS[mode], text);
+          if (out && out.trim()) result = window.Humanizer.humanize(out.trim(), mode);
+        } catch { setStatus("AI unavailable — used local", 2500); }
+      }
+      setStatus("Done", 1500);
     }
-  } else setStatus("Done", 1500);
+  } catch (e) {
+    if (!result) result = window.Humanizer.humanize(text, mode);
+    setStatus("Error — used local rewrite", 2500);
+  } finally {
+    btn.disabled = false;
+  }
 
   output.value = result;
   outWords.textContent = wc(result);

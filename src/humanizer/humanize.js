@@ -60,11 +60,26 @@
 
   function clean(text) {
     return text
-      .replace(/—/g, "-")      // em dash -> hyphen
-      .replace(/–/g, "-")      // en dash -> hyphen
       .replace(/‘|’/g, "'")
       .replace(/“|”/g, '"')
       .replace(/[ \t]+/g, " ");
+  }
+
+  // Remove every hyphen and dash. Dashes used as clause breaks become a
+  // comma; hyphens joining words become a space; stray dashes are dropped.
+  function removeHyphens(text) {
+    let out = text;
+    // Em/en dash (with optional surrounding spaces) acting as a clause break.
+    out = out.replace(/\s*[—–]\s*/g, ", ");
+    // Double hyphen used as a dash.
+    out = out.replace(/\s*--\s*/g, ", ");
+    // Hyphen joining two word characters -> space (well-known -> well known).
+    out = out.replace(/(\w)-(\w)/g, "$1 $2");
+    // Any leftover hyphen with spaces or at edges -> drop / normalize.
+    out = out.replace(/\s*-\s*/g, " ");
+    // A comma right before end punctuation reads wrong: ", ." -> "."
+    out = out.replace(/,\s*([.!?])/g, "$1");
+    return out.replace(/\s{2,}/g, " ");
   }
 
   function applyPhrases(text) {
@@ -155,6 +170,25 @@
     });
   }
 
+  // Concise pass: drop redundant intensifiers/filler words that add length
+  // without meaning. Keeps the output short and plain.
+  const FILLER_WORDS = [
+    "very", "really", "quite", "rather", "actually", "basically",
+    "essentially", "simply", "just", "truly", "literally", "definitely",
+    "certainly", "absolutely", "completely", "totally", "highly",
+    "extremely", "incredibly", "particularly", "especially", "somewhat",
+    "in fact", "of course", "as well", "that said",
+  ];
+  function concise(text) {
+    let out = text;
+    for (const w of FILLER_WORDS) {
+      out = out.replace(new RegExp("\\b" + w + "\\b\\s*", "gi"), "");
+    }
+    // Fix capitalization after any word we stripped at a sentence start.
+    out = out.replace(/(^|[.!?]\s+)([a-z])/g, (m, p, c) => p + c.toUpperCase());
+    return out.replace(/\s{2,}/g, " ").replace(/\s+([.,!?;:])/g, "$1");
+  }
+
   function tidy(text) {
     return text
       .replace(/\s+([.,!?;:])/g, "$1")
@@ -183,6 +217,8 @@
     if (mode === "casual" || mode === "balanced") t = contract(t);
     // Simple mode keeps it plain but still de-bloated.
 
+    t = concise(t);          // trim filler — keep it short and simple
+    t = removeHyphens(t);    // no hyphens or dashes in the output
     return tidy(t);
   }
 
