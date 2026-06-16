@@ -1,0 +1,70 @@
+// Service worker: message router, focus tracking, retrospective scheduler.
+import { orchestrate } from "../agents/agents.js";
+import { runRetrospective } from "./retrospective.js";
+
+// ---- Message handling from popup / content / options ----
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  (async () => {
+    try {
+      if (msg.type === "task") {
+        sendResponse(await orchestrate(msg.task, msg.payload));
+      } else if (msg.type === "retro") {
+        sendResponse(await runRetrospective());
+      } else {
+        sendResponse({ error: "unknown message" });
+      }
+    } catch (e) {
+      sendResponse({ error: String(e.message || e) });
+    }
+  })();
+  return true; // async response
+});
+
+// ---- Focus tracking: accumulate active time per domain ----
+let active = { domain: null, since: Date.now() };
+
+function domainOf(url) {
+  try { return new URL(url).hostname; } catch { return null; }
+}
+
+async function flush() {
+  if (!active.domain) return;
+  const ms = Date.now() - active.since;
+  if (ms < 1000) return;
+  const { focusStats = {} } = await chrome.storage.local.get("focusStats");
+  focusStats[active.domain] = (focusStats[active.domain] || 0) + ms;
+  await chrome.storage.local.set({ focusStats });
+}
+
+async function switchTo(url) {
+  await flush();
+  active = { domain: domainOf(url), since: Date.now() };
+}
+
+chrome.tabs.onActivated.addListener(async ({ tabId }) => {
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (tab?.url) switchTo(tab.url);
+});
+chrome.tabs.onUpdated.addListener((id, info, tab) => {
+  if (info.url && tab.active) switchTo(info.url);
+});
+chrome.windows.onFocusChanged.addListener(async (winId) => {
+  if (winId === chrome.windows.WINDOW_ID_NONE) { await flush(); active.domain = null; }
+});
+
+// ---- Reset focus stats daily ----
+chrome.alarms.create("dailyReset", { periodInMinutes: 60 });
+// ---- Constant retrospective: reflect every 30 min of activity ----
+chrome.alarms.create("retrospective", { periodInMinutes: 30 });
+
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name === "retrospective") {
+    await runRetrospective();
+  } else if (alarm.name === "dailyReset") {
+    const { lastReset } = await chrome.storage.local.get("lastReset");
+    const today = new Date().toDateString();
+    if (lastReset !== today) {
+      await chrome.storage.local.set({ focusStats: {}, lastReset: today });
+    }
+  }
+});

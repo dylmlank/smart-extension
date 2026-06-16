@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "Smart Personal Assistant",
+  "version": "0.1.0",
+  "description": "An agentic browser assistant: summarize, organize tabs, research, and stay focused — with a self-improving retrospective loop.",
+  "permissions": [
+    "tabs",
+    "storage",
+    "activeTab",
+    "scripting",
+    "bookmarks",
+    "tabGroups",
+    "alarms"
+  ],
+  "host_permissions": [
+    "http://localhost/*",
+    "https://openrouter.ai/*",
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "src/core/background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "src/ui/popup.html",
+    "default_title": "Smart Assistant",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/core/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "src/ui/options.html",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    :root {
+      --bg: #ffffff; --fg: #1a1a1a; --muted: #6b7280;
+      --card: #f4f4f5; --border: #e4e4e7; --accent: #4f46e5;
+    }
+    [data-theme="dark"] {
+      --bg: #18181b; --fg: #f4f4f5; --muted: #a1a1aa;
+      --card: #27272a; --border: #3f3f46; --accent: #818cf8;
+    }
+    * { box-sizing: border-box; }
+    body { width: 360px; margin: 0; font: 14px system-ui, sans-serif;
+           background: var(--bg); color: var(--fg); }
+    header { display: flex; align-items: center; justify-content: space-between;
+             padding: 12px 14px; border-bottom: 1px solid var(--border); }
+    h1 { font-size: 15px; margin: 0; }
+    #theme { background: none; border: 1px solid var(--border); border-radius: 8px;
+             color: var(--fg); cursor: pointer; padding: 4px 8px; }
+    .quick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 12px 14px; }
+    .quick button { background: var(--card); border: 1px solid var(--border); color: var(--fg);
+             border-radius: 10px; padding: 10px; cursor: pointer; font-size: 13px; }
+    .quick button:hover { border-color: var(--accent); }
+    .input { display: flex; gap: 8px; padding: 0 14px 12px; }
+    #task { flex: 1; padding: 9px 11px; border-radius: 10px; border: 1px solid var(--border);
+            background: var(--bg); color: var(--fg); }
+    #go { background: var(--accent); color: #fff; border: none; border-radius: 10px;
+          padding: 0 14px; cursor: pointer; }
+    #out { margin: 0 14px 12px; padding: 12px; background: var(--card); border-radius: 10px;
+           min-height: 40px; white-space: pre-wrap; font-size: 13px; line-height: 1.5; max-height: 280px; overflow:auto; }
+    .meta { color: var(--muted); font-size: 11px; padding: 0 14px 10px; }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🧠 Smart Assistant</h1>
+    <button id="theme">🌙</button>
+  </header>
+  <div class="quick">
+    <button data-task="Summarize this page">📄 Summarize</button>
+    <button data-task="Organize and group my tabs by topic">🗂️ Organize tabs</button>
+    <button data-task="Explain the selected text">🔍 Research</button>
+    <button data-task="How is my focus today?">🎯 Focus check</button>
+  </div>
+  <div class="input">
+    <input id="task" placeholder="Ask anything…" />
+    <button id="go">→</button>
+  </div>
+  <div id="out">Pick an action or type a request.</div>
+  <div class="meta"><span id="prov"></span> · <a href="#" id="opts">Settings</a> · <a href="#" id="retro">Reflect now</a></div>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
