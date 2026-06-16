@@ -46,7 +46,138 @@
     [/\bdemonstrate\b/gi, "show"],
     [/\bencompasses\b/gi, "includes"],
     [/\bmultifaceted\b/gi, "complex"],
+    // More AI buzzwords -> plain words.
+    [/\bdelve into\b/gi, "look at"],
+    [/\bdelving into\b/gi, "looking at"],
+    [/\bdive into\b/gi, "get into"],
+    [/\bdiving into\b/gi, "getting into"],
+    [/\bembark on\b/gi, "start"],
+    [/\bembark upon\b/gi, "start"],
+    [/\bharness(?:ing)?\b/gi, "use"],
+    [/\bunlock(?:ing)?\b/gi, "open up"],
+    [/\bunleash(?:ing)?\b/gi, "release"],
+    [/\belevates\b/gi, "raises"],
+    [/\belevating\b/gi, "raising"],
+    [/\belevate\b/gi, "raise"],
+    [/\bempowers\b/gi, "helps"],
+    [/\bempowering\b/gi, "helping"],
+    [/\bempower\b/gi, "help"],
+    [/\boptimize\b/gi, "improve"],
+    [/\bstreamline(?:s|d)?\b/gi, "simplify"],
+    [/\bshowcase(?:s|d)?\b/gi, "show"],
+    [/\bspearhead(?:s|ed|ing)?\b/gi, "lead"],
+    [/\bfosters\b/gi, "builds"],
+    [/\bfostering\b/gi, "building"],
+    [/\bfoster\b/gi, "build"],
+    [/\bdynamic\b/gi, "fast-moving"],
+    [/\bunderscore(?:s|d)?\b/gi, "show"],
+    [/\bcornerstone\b/gi, "basis"],
+    [/\ba myriad of\b/gi, "many"],
+    [/\bmyriad\b/gi, "many"],
+    [/\ba game[- ]changer\b/gi, "a big deal"],
+    [/\bcutting[- ]edge\b/gi, "modern"],
+    [/\bstate[- ]of[- ]the[- ]art\b/gi, "modern"],
+    [/\bever[- ](?:evolving|changing|growing)\b/gi, "changing"],
+    [/\bseamlessly\b/gi, "smoothly"],
+    [/\bseamless\b/gi, "smooth"],
+    [/\bholistic\b/gi, "complete"],
+    [/\btransformative\b/gi, "major"],
+    [/\bunprecedented\b/gi, "rare"],
+    [/\bvibrant\b/gi, "lively"],
+    [/\bintricate\b/gi, "detailed"],
+    [/\bnuanced\b/gi, "subtle"],
+    [/\bprofound\b/gi, "deep"],
+    [/\bparamount\b/gi, "key"],
+    [/\binvaluable\b/gi, "useful"],
+    [/\bindispensable\b/gi, "essential"],
+    [/\bboasts?\b/gi, "has"],
+    [/\bboasting\b/gi, "with"],
+    [/\bshed(?:s|ding)? light on\b/gi, "explains"],
+    [/\bstand the test of time\b/gi, "last"],
+    [/\bat the end of the day\b/gi, ""],
+    [/\bthe bottom line is\b/gi, ""],
+    [/\brest assured,?\s*/gi, ""],
+    [/\bthat being said,?\s*/gi, "still, "],
+    [/\bwith that said,?\s*/gi, "still, "],
+    [/\bin essence,?\s*/gi, ""],
+    [/\ball in all,?\s*/gi, ""],
+    [/\bthe (?:rich )?tapestry of\b/gi, "the mix of"],
+    [/\bin the (?:ever[- ]changing )?(?:world|realm|landscape) of\b/gi, "in"],
+    [/\blandscape\b/gi, "field"],
+    [/\brealm\b/gi, "area"],
+    [/\bplay(?:s|ed)? a significant role in\b/gi, "matters for"],
+    [/\bvaluable insights?\b/gi, "useful points"],
+    [/\bcomprehensive (?:understanding|overview|guide)\b/gi, "full picture"],
   ];
+
+  // Antithesis templates AI overuses: "not just X, but Y", "It's not X, it's Y".
+  // We collapse them to the affirmative half so the rhythm stops repeating.
+  function breakAntithesis(text) {
+    let out = text;
+    // "It's not (just) X, it's Y" -> "It's Y"
+    out = out.replace(
+      /\bit'?s not (?:just |merely |only |simply )?[^.,;!?]{1,60}?,\s*it'?s\b/gi,
+      "it's"
+    );
+    // "not just/only/merely X, but (also) Y" -> "X, and Y" (keep both halves,
+    // drop the templated framing).
+    out = out.replace(
+      /\bnot (?:just|only|merely|simply)\s+([^.,;!?]{1,60}?),?\s+but(?: also)?\s+/gi,
+      "$1, and "
+    );
+    // "more than just X" -> "more than X"
+    out = out.replace(/\bmore than (?:just|simply)\b/gi, "more than");
+    // "isn't just X" -> "isn't only X" reads less templated... actually drop "just".
+    out = out.replace(/\bisn'?t (?:just|only|merely|simply)\b/gi, "isn't");
+    return out;
+  }
+
+  // Formulaic openers/closers AI bolts onto paragraphs. Strip the framing word
+  // and let the real sentence stand on its own.
+  function dropFormulaic(text) {
+    let out = text;
+    const leads = [
+      "in conclusion", "to conclude", "in summary", "to summarize",
+      "all in all", "in essence", "at its core", "first and foremost",
+      "to begin with", "needless to say", "it goes without saying that",
+    ];
+    for (const lead of leads) {
+      const re = new RegExp("(^|[.!?]\\s+)" + lead.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ",?\\s+", "gi");
+      out = out.replace(re, "$1");
+    }
+    // Re-capitalize sentence starts we may have exposed.
+    out = out.replace(/(^|[.!?]\s+)([a-z])/g, (m, p, c) => p + c.toUpperCase());
+    return out;
+  }
+
+  // De-duplicate repeated sentence openers: if several sentences in a row start
+  // with the same word ("This...", "These...", "Additionally,"), drop or swap
+  // the lead-in on the repeats so the rhythm varies.
+  function varyOpeners(sentences) {
+    const SWAP = {
+      "additionally": "", "moreover": "", "furthermore": "",
+      "consequently": "So ", "therefore": "So ", "thus": "So ",
+      "however": "But ", "nevertheless": "Still ", "nonetheless": "Still ",
+    };
+    let prevOpener = "";
+    return sentences.map((s) => {
+      const m = s.match(/^([A-Za-z']+)\b/);
+      const first = m ? m[1].toLowerCase() : "";
+      if (first && first === prevOpener) {
+        // Same opener as the previous sentence — vary it.
+        if (first in SWAP) {
+          const rep = SWAP[first];
+          let rest = s.replace(/^[A-Za-z']+,?\s*/, "");
+          let next = rep + (rep ? rest.charAt(0).toLowerCase() + rest.slice(1)
+                                 : rest.charAt(0).toUpperCase() + rest.slice(1));
+          prevOpener = (next.match(/^([A-Za-z']+)/) || ["", ""])[1].toLowerCase();
+          return next;
+        }
+      }
+      prevOpener = first;
+      return s;
+    });
+  }
 
   // Sentence-initial transition words that AI overuses. We thin these out.
   const TRANSITIONS = [
@@ -103,14 +234,20 @@
     return x - Math.floor(x);
   }
 
+  // The strongest AI tells — always strip these at a sentence start.
+  const ALWAYS_DROP = new Set([
+    "moreover", "furthermore", "additionally", "consequently",
+    "indeed", "notably", "importantly", "ultimately",
+  ]);
+
   function thinTransitions(sentences) {
     let removed = 0;
     return sentences.map((s, i) => {
       const lower = s.toLowerCase();
       for (const t of TRANSITIONS) {
         if (lower.startsWith(t + ",") || lower.startsWith(t + " ")) {
-          // Remove ~70% of transition openers to break the pattern.
-          if (seeded(i, removed) < 0.7) {
+          // Always remove the worst offenders; thin the rest ~70%.
+          if (ALWAYS_DROP.has(t) || seeded(i, removed) < 0.7) {
             removed++;
             let rest = s.slice(t.length).replace(/^[,\s]+/, "");
             return rest.charAt(0).toUpperCase() + rest.slice(1);
@@ -189,8 +326,22 @@
     return out.replace(/\s{2,}/g, " ").replace(/\s+([.,!?;:])/g, "$1");
   }
 
+  // Fix "a"/"an" after our word swaps (e.g. "an changing" -> "a changing",
+  // "a opportunity" -> "an opportunity"). Vowel-sound heuristic.
+  function fixArticles(text) {
+    return text.replace(/\b(a|an)\s+([A-Za-z]+)/g, (m, art, word) => {
+      const vowel = /^[aeiou]/i.test(word) ||
+        /^(hour|honest|honor|heir)/i.test(word);
+      const want = vowel ? "an" : "a";
+      // Preserve original capitalization of the article.
+      const fixed = art[0] === art[0].toUpperCase()
+        ? want.charAt(0).toUpperCase() + want.slice(1) : want;
+      return fixed + " " + word;
+    });
+  }
+
   function tidy(text) {
-    return text
+    return fixArticles(text)
       .replace(/\s+([.,!?;:])/g, "$1")
       .replace(/([.,!?;:])(?=[^\s"')\]])/g, "$1 ")
       .replace(/\s{2,}/g, " ")
@@ -205,9 +356,12 @@
 
     let t = clean(text);
     t = applyPhrases(t);
+    t = breakAntithesis(t);     // kill "not just X, but Y" templates
+    t = dropFormulaic(t);       // strip "In conclusion", "First and foremost"…
 
     let sentences = splitSentences(t);
     sentences = thinTransitions(sentences);
+    sentences = varyOpeners(sentences);   // break repeated sentence openers
 
     if (mode !== "casual") sentences = varyLength(sentences);
     if (mode === "casual") sentences = casualTouch(sentences);
