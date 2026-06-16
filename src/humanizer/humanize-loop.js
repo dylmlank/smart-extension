@@ -44,12 +44,25 @@
       : t.replace(/[—–]/g, ", ").replace(/(\w)-(\w)/g, "$1 $2").replace(/-/g, " ");
   }
 
+  // Describe which AI tells the detector still flags, as a short feedback string
+  // the regenerator can target ("Sentence rhythm, Casual-AI phrases, ...").
+  function survivingTells(detectResult) {
+    if (!detectResult || !detectResult.signals) return "";
+    return detectResult.signals
+      .filter((s) => s.contribution >= 30)
+      .sort((a, b) => b.contribution - a.contribution)
+      .slice(0, 4)
+      .map((s) => s.name)
+      .join(", ");
+  }
+
   async function loopHumanize(text, opts) {
     opts = opts || {};
     const mode = opts.mode || "balanced";
     const target = opts.target ?? 30;
     const maxRounds = opts.maxRounds ?? 5;
     const llm = opts.llm;
+    const regenerate = opts.regenerate; // (text, mode, feedback, round) => string
     const onRound = opts.onRound || (() => {});
 
     const H = window.Humanizer, D = window.Detector;
@@ -57,8 +70,9 @@
 
     // Score a candidate. A null score means "too short to judge" — that's not
     // an AI signal, so treat it as already acceptable (just below target).
+    const detectOf = (t) => D.detect(t);
     const scoreOf = (t) => {
-      const s = D.detect(t).score;
+      const s = detectOf(t).score;
       return s == null ? Math.min(target, 25) : s;
     };
 
@@ -73,10 +87,28 @@
       return { text: best, score: bestScore, rounds: 1, history, hitTarget: true };
     }
 
+    // How many regenerate attempts have we made (drives prompt escalation)?
+    let regenRound = 0;
+
     for (let r = 1; r < maxRounds; r++) {
       let candidate;
       let via;
-      if (llm) {
+
+      if (regenerate) {
+        // Regenerate-loop: rebuild from MEANING each round, feeding back the
+        // tells that survived so the model knows what to fix. We regenerate from
+        // the ORIGINAL text (best signal) but escalate the prompt by round.
+        try {
+          const feedback = survivingTells(detectOf(best));
+          const out = await regenerate(text, mode, feedback, regenRound);
+          candidate = (out || "").trim();
+          via = "regenerate";
+          regenRound++;
+        } catch (e) {
+          candidate = H.humanize(current, mode);
+          via = "local-fallback";
+        }
+      } else if (llm) {
         try {
           const out = await llm(promptFor(mode, r), current);
           candidate = stripDashes((out || "").trim());
@@ -103,7 +135,7 @@
         return { text: best, score: bestScore, rounds: r + 1, history, hitTarget: true };
       }
       // Without an LLM, local re-passes converge fast — stop if no gain.
-      if (!llm && score >= history[r - 1].score) break;
+      if (!llm && !regenerate && score >= history[r - 1].score) break;
     }
 
     return {

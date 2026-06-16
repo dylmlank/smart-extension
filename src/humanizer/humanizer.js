@@ -148,6 +148,31 @@ async function llmRewrite(systemPrompt, userText) {
   return text || "";
 }
 
+// Regenerate from scratch: summarize -> rewrite fresh from the notes following
+// the anti-detection guidelines, then run the local humanizer as a finishing
+// pass. Breaks the AI sentence skeleton entirely. `feedback`/`round` let the
+// loop target surviving tells and escalate.
+const REGEN_RULES =
+  " Write like a real person, not an AI. Vary sentence length sharply (mix very " +
+  "short and longer sentences). Use contractions. Be concrete and direct. Do NOT " +
+  "use hyphens/dashes, buzzwords (leverage/delve/foster/seamless/robust/crucial/" +
+  "realm/landscape), phrases like 'in today's world' / 'it is important to note' / " +
+  "'plays a role' / 'not just X but Y', or 'First,/Second,/Finally,' scaffolding. " +
+  "No formulaic intro or conclusion. Output only the final text.";
+async function llmRegenerate(text, mode, feedback, round) {
+  const tone = mode === "simple" ? "in plain, simple language"
+    : mode === "casual" ? "in a casual, conversational voice" : "naturally";
+  const notes = await llmRewrite(
+    "List the key points of this text as terse bullet notes — facts only, no style. Output only bullets.",
+    text
+  );
+  let sys = `Using these notes, write a human paragraph ${tone}.` + REGEN_RULES;
+  if (round > 0) sys += " The previous attempt STILL read like AI. Be far more aggressive with rhythm and plain words.";
+  if (feedback) sys += ` Fix these tells the detector found: ${String(feedback).slice(0, 200)}.`;
+  const draft = await llmRewrite(sys, notes || text);
+  return window.Humanizer.humanize((draft || "").trim(), mode);
+}
+
 const btn = $("humanizeBtn");
 btn.onclick = async () => {
   const text = input.value.trim();
@@ -161,12 +186,15 @@ btn.onclick = async () => {
 
   try {
     if (loop) {
-      // Iterate until the detector reads human (or max rounds).
+      // Iterate until the detector reads human (or max rounds). When "Rewrite
+      // from scratch" is on, each round rebuilds from meaning (regenerate-loop).
+      const regen = $("regenerate") && $("regenerate").checked && useLLM;
       const res = await window.loopHumanize(text, {
         mode,
         target: 30,
         maxRounds: useLLM ? 5 : 3,
-        llm: useLLM ? llmRewrite : null,
+        regenerate: regen ? llmRegenerate : null,
+        llm: useLLM && !regen ? llmRewrite : null,
         onRound: (info) => {
           setOutput(info.text, text);
           setStatus(`Round ${info.round + 1} · ${info.via} · score ${info.score}`);
@@ -182,10 +210,15 @@ btn.onclick = async () => {
     } else {
       result = window.Humanizer.humanize(text, mode);
       if (useLLM) {
-        setStatus("Deep rewriting…");
+        const regen = $("regenerate") && $("regenerate").checked;
+        setStatus(regen ? "Summarizing & rewriting…" : "Deep rewriting…");
         try {
-          const out = await llmRewrite(PROMPTS[mode], text);
-          if (out && out.trim()) result = window.Humanizer.humanize(out.trim(), mode);
+          if (regen) {
+            result = await llmRegenerate(text, mode);
+          } else {
+            const out = await llmRewrite(PROMPTS[mode], text);
+            if (out && out.trim()) result = window.Humanizer.humanize(out.trim(), mode);
+          }
         } catch { setStatus("AI unavailable — used local", 2500); }
       }
       setStatus("Done", 1500);
