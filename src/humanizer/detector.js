@@ -285,33 +285,43 @@
     // Punctuation profile (formal serial commas/semicolons/colons vs. informal).
     const sigPunct = punctuationProfile(t, sents, wordCount);
 
-    // Predictability / perplexity proxy: how often the next word is the
-    // statistically obvious one. LLM text is low-perplexity (very predictable).
+    // Predictability + filler. The raw bigram-frequency signal turned out to be
+    // weakly discriminative on its own (AI and human prose overlap heavily), so
+    // it carries a small weight. The FILLER-construction density (vague modal
+    // hedges, padded quantifiers) is the strong, precise part — it gets its own
+    // signal. Weights below were tuned against tests/labeled.json by measuring
+    // each signal's AI-vs-human separation.
     const P = (typeof global !== "undefined" && global.Predictability) ||
               (typeof window !== "undefined" && window.Predictability) || null;
-    const sigPredict = P ? P.predictability(t) : 0.5;
+    const sigFiller = P ? P.fillerDensity(t) : 0;
+    const sigPredict = P ? P.predictability(t) : 0;
     const hasPredict = !!P;
 
-    // Weighted blend. Predictability + repetition + cliché are the strongest.
     const weights = [
-      [sigCliche, 0.20, "AI cliché / buzzword density", cliche.toFixed(1) + " / 100 words"],
-      [sigPredict, 0.16, "Predictability (perplexity)", sigPredict > 0.5 ? "low perplexity (AI-like)" : "high perplexity (human-like)"],
-      [sigRepeat, 0.13, "Repeated phrasing", sigRepeat > 0.3 ? "reuses phrases (AI-like)" : "low repetition"],
-      [sigBurst, 0.12, "Sentence rhythm", burst > 0.5 ? "varied (human-like)" : "uniform (AI-like)"],
-      [sigOpeners, 0.09, "Repeated sentence openers", sigOpeners > 0.3 ? "same openings repeat" : "varied openings"],
-      [sigPunct, 0.07, "Punctuation profile", sigPunct > 0.4 ? "formal (AI-like)" : "informal (human-like)"],
-      [sigAntithesis, 0.06, "Antithesis templates", antithesisHits + " (\"not X, but Y\")"],
-      [sigVariety, 0.05, "Vocabulary variety", (variety * 100).toFixed(0) + "% unique"],
-      [sigHedge, 0.04, "Hedging / filler", hedge.toFixed(1) + " / 100 words"],
-      [sigThree, 0.03, "Rule-of-three lists", threes + " found"],
-      [sigFormulaic, 0.03, "Formulaic framing", formulaic + " openers/closers"],
-      [sigNoContractions, 0.01, "Contraction use", contractions + " found"],
+      [sigCliche, 0.22, "AI cliché / buzzword density", cliche.toFixed(1) + " / 100 words"],
+      [sigNoContractions, 0.16, "Contraction use", contractions + " found"],
+      [sigBurst, 0.15, "Sentence rhythm", burst > 0.5 ? "varied (human-like)" : "uniform (AI-like)"],
+      [sigFiller, 0.10, "Filler constructions", sigFiller > 0.3 ? "vague hedges (AI-like)" : "low filler"],
+      [sigHedge, 0.07, "Hedging / filler", hedge.toFixed(1) + " / 100 words"],
+      [sigRepeat, 0.06, "Repeated phrasing", sigRepeat > 0.3 ? "reuses phrases (AI-like)" : "low repetition"],
+      [sigFormulaic, 0.05, "Formulaic framing", formulaic + " openers/closers"],
+      [sigThree, 0.04, "Rule-of-three lists", threes + " found"],
+      [sigOpeners, 0.04, "Repeated sentence openers", sigOpeners > 0.3 ? "same openings repeat" : "varied openings"],
+      [sigPunct, 0.04, "Punctuation profile", sigPunct > 0.4 ? "formal (AI-like)" : "informal (human-like)"],
+      [sigAntithesis, 0.03, "Antithesis templates", antithesisHits + " (\"not X, but Y\")"],
+      [sigPredict, 0.02, "Predictability (perplexity)", sigPredict > 0.5 ? "low perplexity (AI-like)" : "high perplexity (human-like)"],
+      [sigVariety, 0.01, "Vocabulary variety", (variety * 100).toFixed(0) + "% unique"],
       [sigDash, 0.01, "Em-dash regularity", dashes + " dashes"],
     ];
 
-    // If the predictability table isn't loaded, redistribute its weight so the
-    // score stays calibrated (don't let a neutral 0.5 drag every result up).
-    if (!hasPredict) weights.splice(1, 1);
+    // Drop the data-driven signals entirely if the predictability module isn't
+    // present, so a missing table doesn't skew the score.
+    if (!hasPredict) {
+      for (let i = weights.length - 1; i >= 0; i--) {
+        const n = weights[i][2];
+        if (n === "Filler constructions" || n === "Predictability (perplexity)") weights.splice(i, 1);
+      }
+    }
 
     let score = 0;
     for (const [val, w] of weights) score += val * w;
@@ -327,13 +337,30 @@
     if (sigRepeat >= 0.5) score = Math.max(score, 65);
     // Multiple antithesis templates in one passage rarely happen in human prose.
     if (antithesisHits >= 2) score = Math.max(score, 70);
-    // Very low perplexity / heavy filler constructions: fluent but contentless
-    // text reads AI even with no buzzwords. Require a corroborating structural
-    // signal (uniform rhythm OR repeated openers OR another filler tell) so a
-    // plain-but-human short paragraph isn't flagged on predictability alone.
-    const corroborated = sigBurst >= 0.4 || sigOpeners >= 0.3 || sigCliche >= 0.2;
-    if (hasPredict && sigPredict >= 0.75 && corroborated) score = Math.max(score, 58);
-    if (hasPredict && sigPredict >= 0.9 && corroborated) score = Math.max(score, 66);
+    // Heavy filler constructions: fluent but contentless AI prose reads AI even
+    // with no buzzwords. Require a corroborating structural signal so a plain-
+    // but-human paragraph isn't flagged on filler alone.
+    const corroborated = sigBurst >= 0.35 || sigOpeners >= 0.3 ||
+                         sigCliche >= 0.15 || sigNoContractions >= 0.6;
+    if (hasPredict && sigFiller >= 0.5 && corroborated) score = Math.max(score, 58);
+    if (hasPredict && sigFiller >= 0.85 && corroborated) score = Math.max(score, 66);
+
+    // Stacked moderate tells: no single signal is damning, but uniform rhythm +
+    // formal punctuation + no contractions + some cliché together is a strong
+    // AI fingerprint that a plain summed score under-counts. Count how many of
+    // these "moderate" thresholds are crossed and floor accordingly.
+    // No-contractions counts only at HALF weight: third-person factual prose
+    // legitimately lacks contractions, so it's a weak tell on its own.
+    const moderate =
+      (sigBurst >= 0.6 ? 1 : 0) +
+      (sigNoContractions >= 0.8 ? 0.5 : 0) +
+      (sigPunct >= 0.35 ? 1 : 0) +
+      (sigCliche >= 0.3 ? 1 : 0) +
+      (sigHedge >= 0.3 ? 1 : 0) +
+      (sigThree >= 0.5 ? 1 : 0) +
+      (sigFiller >= 0.4 ? 1 : 0);
+    if (moderate >= 3) score = Math.max(score, 58);
+    if (moderate >= 4) score = Math.max(score, 68);
 
     score = Math.round(clamp(score, 1, 99));
 

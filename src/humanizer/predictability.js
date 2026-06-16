@@ -18,52 +18,18 @@
 
   function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
 
-  // Common high-probability continuations. Keyed by a word; the value is the
-  // set of words that very frequently follow it in fluent, generic prose.
-  // These are the transitions an LLM is most likely to produce. Hand-curated
-  // from the most frequent English bigrams (function words + generic content).
-  const NEXT = {
-    the: ["most", "same", "first", "best", "world", "way", "fact", "use", "need", "ability", "process", "number", "importance", "future", "power", "key", "rise", "concept", "idea", "role"],
-    of: ["the", "a", "this", "these", "our", "their", "its", "such", "course", "all", "modern", "various", "different", "many"],
-    to: ["the", "be", "make", "ensure", "provide", "create", "help", "understand", "achieve", "improve", "develop", "support", "address", "navigate", "explore", "consider", "do", "a"],
-    in: ["the", "a", "this", "order", "addition", "fact", "terms", "today's", "many", "particular", "general", "recent", "our", "their"],
-    a: ["wide", "variety", "range", "number", "result", "way", "key", "vital", "crucial", "significant", "comprehensive", "deeper", "better", "more", "powerful", "single", "new", "great"],
-    is: ["a", "the", "an", "not", "one", "essential", "crucial", "important", "vital", "key", "often", "also", "that", "to", "becoming", "no"],
-    and: ["the", "a", "their", "its", "this", "also", "can", "more", "even", "ensure", "provide", "make", "help", "improve"],
-    it: ["is", "can", "also", "has", "comes", "becomes", "allows", "provides", "plays", "serves", "remains", "offers"],
-    that: ["the", "this", "it", "they", "can", "are", "is", "would", "will", "may", "we", "you", "these"],
-    this: ["is", "can", "approach", "means", "allows", "process", "way", "makes", "leads", "results", "ensures", "helps"],
-    these: ["are", "tools", "factors", "include", "can", "challenges", "elements", "technologies", "changes", "trends", "insights"],
-    for: ["the", "a", "example", "instance", "this", "these", "many", "those", "businesses", "individuals", "success", "growth"],
-    with: ["the", "a", "this", "these", "their", "its", "respect", "regard", "ease", "care", "confidence"],
-    as: ["a", "the", "well", "such", "it", "they", "we", "more", "part", "an"],
-    can: ["be", "help", "also", "lead", "provide", "make", "ensure", "create", "improve", "enhance", "have", "significantly"],
-    will: ["be", "help", "continue", "allow", "ensure", "provide", "have", "make", "likely", "also", "depend"],
-    by: ["the", "a", "leveraging", "using", "understanding", "following", "providing", "creating", "ensuring", "embracing", "focusing"],
-    on: ["the", "a", "this", "their", "its", "your", "our", "how", "what", "which"],
-    are: ["the", "a", "not", "also", "often", "more", "essential", "crucial", "key", "becoming", "many", "several"],
-    we: ["can", "must", "need", "should", "will", "have", "are", "live", "explore", "see"],
-    you: ["can", "will", "should", "need", "may", "want", "have", "are", "must"],
-    they: ["are", "can", "have", "also", "will", "provide", "offer", "help", "allow", "must"],
-    not: ["only", "just", "merely", "simply", "a", "the", "be", "to"],
-    more: ["than", "effective", "efficient", "important", "likely", "and", "complex", "accessible", "engaging", "productive"],
-    its: ["own", "ability", "use", "role", "importance", "impact", "potential", "power", "value", "benefits"],
-    their: ["own", "ability", "needs", "goals", "lives", "work", "use", "impact", "potential", "respective"],
-    one: ["of", "that", "the", "must", "can", "key", "important"],
-    plays: ["a", "an"],
-    play: ["a", "an"],
-    such: ["as", "a", "an"],
-    when: ["it", "you", "we", "they", "the", "considering"],
-    while: ["the", "it", "this", "also", "maintaining", "ensuring", "still"],
-    however: ["it", "this", "the", "there", "as", "with"],
-    moreover: ["it", "the", "this", "these"],
-    furthermore: ["the", "it", "this"],
-    through: ["the", "a", "this", "these", "their", "careful"],
-    at: ["the", "its", "this", "a", "least", "hand"],
-    an: ["essential", "important", "integral", "increasingly", "effective", "array", "era", "approach", "individual", "organization"],
-    each: ["of", "other", "individual", "one", "person", "with"],
-    from: ["the", "a", "this", "these", "their", "simple"],
-  };
+  // Real bigram-probability table built from ~4.8M tokens of human prose (NLTK
+  // brown/reuters/gutenberg/webtext). Loaded from bigrams.js (browser <script>)
+  // or bigrams.json (node). Each entry: { n: [top-12 next words], m: mass the
+  // top-K covers }. `m` is how concentrated a word's continuations are — a high
+  // m means "when you see this word, the next word is very predictable".
+  let TABLE = (typeof global !== "undefined" && global.BIGRAMS) ||
+              (typeof window !== "undefined" && window.BIGRAMS) || null;
+  if (!TABLE && typeof require === "function") {
+    try { TABLE = require("./bigrams.json"); } catch { /* not in node path */ }
+  }
+  TABLE = TABLE || {};
+  const HAS_TABLE = Object.keys(TABLE).length > 0;
 
   // Generic low-information AI constructions: vague modal hedges, "a wide range
   // of" filler, possessive doubling, empty intensifiers. These produce fluent
@@ -98,31 +64,38 @@
     return (text.toLowerCase().match(/[a-z']+/g) || []);
   }
 
-  // Fraction of adjacent word pairs whose second word is a "predictable"
-  // continuation of the first. Higher fraction = lower perplexity = more AI.
+  // How predictable is each next word given the previous one? For every pair
+  // (a, b) we know about, we score a "hit" when b is among a's top
+  // continuations, weighted by a's concentration mass `m` (predictable
+  // transitions from highly-concentrated words are the strongest AI tell).
+  // Higher average = lower perplexity = more AI-like.
   function predictability(text) {
-    const ws = tok(text);
-    if (ws.length < 12) return 0.5; // not enough signal
-    let predictable = 0, considered = 0;
-    for (let i = 0; i < ws.length - 1; i++) {
-      const a = ws[i], b = ws[i + 1];
-      const nexts = NEXT[a];
-      if (!nexts) continue;          // we only judge pairs we have data for
-      considered++;
-      if (nexts.includes(b)) predictable++;
-    }
-    if (considered < 5) return 0.5;
-    const frac = predictable / considered;
-    // Calibrate: in generic AI prose, ~45-65% of judged transitions are
-    // predictable; human prose tends lower (~25-40%). Map that band to 0..1.
-    const bigramSig = clamp((frac - 0.3) / 0.35, 0, 1);
-
-    // Blend with the filler-construction density. Filler is a strong, precise
-    // tell, so it can pull the signal up on its own even if the bigram table
-    // didn't cover many of this passage's transitions.
     const filler = fillerDensity(text);
-    return clamp(Math.max(bigramSig * 0.7 + filler * 0.6, filler * 0.9), 0, 1);
+    const ws = tok(text);
+    if (!HAS_TABLE || ws.length < 12) {
+      // No table (or too short): fall back to the precise filler signal alone.
+      return clamp(filler * 0.9, 0, 1);
+    }
+    let scoreSum = 0, considered = 0;
+    for (let i = 0; i < ws.length - 1; i++) {
+      const e = TABLE[ws[i]];
+      if (!e) continue;                 // only judge pairs we have data for
+      considered++;
+      if (e.n.indexOf(ws[i + 1]) !== -1) {
+        // Hit: weight by how concentrated this word's continuations are.
+        // m ranges ~0.05 (the) .. ~0.6 (of/such); scale to emphasize high-m.
+        scoreSum += 0.5 + e.m;          // 0.55 .. ~1.1 per predictable hit
+      }
+    }
+    if (considered < 5) return clamp(filler * 0.9, 0, 1);
+    // Average predictable-hit weight across judged pairs. Human prose lands
+    // ~0.10-0.22; generic AI prose ~0.28-0.45. Map that band to 0..1.
+    const avg = scoreSum / considered;
+    const bigramSig = clamp((avg - 0.14) / 0.22, 0, 1);
+
+    // Combine with filler density (precise, complementary). Either can flag.
+    return clamp(Math.max(bigramSig * 0.85 + filler * 0.4, filler * 0.9), 0, 1);
   }
 
-  global.Predictability = { predictability, fillerDensity };
+  global.Predictability = { predictability, fillerDensity, HAS_TABLE };
 })(typeof window !== "undefined" ? window : globalThis);

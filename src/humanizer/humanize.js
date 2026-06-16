@@ -368,9 +368,31 @@
       [/\bthere is\b/g, "there's"], [/\bThere is\b/g, "There's"],
       [/\bwould not\b/g, "wouldn't"], [/\bshould not\b/g, "shouldn't"],
       [/\bhave not\b/g, "haven't"], [/\bhas not\b/g, "hasn't"],
+      // Pronoun + auxiliary contractions (no-contraction text is a strong tell).
+      [/\bI am\b/g, "I'm"],
+      [/\b([Tt]hey|[Ww]e|[Yy]ou) have\b/g, "$1've"],
+      [/\b([Tt]hey|[Ww]e|[Yy]ou|[Ii]) will\b/g, "$1'll"],
+      [/\b([Tt]hey|[Ww]e|[Yy]ou|[Ii]) would\b/g, "$1'd"],
+      [/\b([Hh]e|[Ss]he|[Ii]t) is\b/g, "$1's"],
+      [/\b([Hh]e|[Ss]he|[Ii]t|[Tt]hat|[Tt]here) will\b/g, "$1'll"],
+      [/\bmust not\b/g, "mustn't"], [/\bcould not\b/g, "couldn't"],
+      [/\bwere not\b/g, "weren't"], [/\bwas not\b/g, "wasn't"],
     ];
     let out = text;
     for (const [re, rep] of map) out = out.replace(re, rep);
+    return out;
+  }
+
+  // Soften AI-formal punctuation: trim serial/Oxford commas in short lists and
+  // demote some mid-sentence colons. This lowers the "punctuation profile" tell.
+  function informalizePunct(text) {
+    let out = text;
+    // "X, Y, and Z" -> "X, Y and Z" (drop the Oxford comma humans often skip).
+    out = out.replace(/(\w),(\s+(?:and|or)\s+)/g, "$1$2");
+    // Mid-sentence colon used to introduce a clause -> comma.
+    out = out.replace(/(\w):\s+([a-z])/g, "$1, $2");
+    // Semicolons read formal -> split into two sentences or use a comma.
+    out = out.replace(/\s*;\s*/g, ", ");
     return out;
   }
 
@@ -498,8 +520,10 @@
 
     t = sentences.join(" ");
 
-    if (mode === "casual" || mode === "balanced") t = contract(t);
-    // Simple mode keeps it plain but still de-bloated.
+    // Contractions are a strong human tell — apply in every mode (simple mode
+    // gets the plain ones; balanced/casual get the fuller set already in map).
+    t = contract(t);
+    t = informalizePunct(t); // soften AI-formal punctuation (commas/colons/semis)
 
     t = concise(t);          // trim filler — keep it short and simple
     t = removeHyphens(t);    // no hyphens or dashes in the output
