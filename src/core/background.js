@@ -10,7 +10,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     try {
       if (msg.type === "task") {
-        sendResponse(await orchestrate(msg.task, msg.payload));
+        sendResponse(await orchestrate(msg.task, msg.payload, msg.history));
       } else if (msg.type === "retro") {
         sendResponse(await runRetrospective());
       } else if (msg.type === "listTools") {

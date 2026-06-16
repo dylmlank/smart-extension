@@ -1,6 +1,7 @@
 const out = document.getElementById("out");
 const prov = document.getElementById("prov");
 const taskIn = document.getElementById("task");
+const newBtn = document.getElementById("new");
 
 // Theme
 const themeBtn = document.getElementById("theme");
@@ -18,24 +19,69 @@ themeBtn.onclick = async () => {
   await chrome.storage.local.set({ theme: t });
 };
 
+// Conversation memory: the running turn history for follow-up questions.
+// Reset when the agent changes (a new topic) or via the "New" button.
+let history = [];
+let lastAgent = null;
+
+// Minimal markdown: **bold**, `code`, bullet lines, and escape HTML.
+function renderMd(text) {
+  const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return esc(text)
+    .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/^[-*]\s+(.*)$/gm, "<li>$1</li>")
+    .replace(/(<li>[\s\S]*?<\/li>)/g, "<ul>$1</ul>")
+    .replace(/\n/g, "<br>");
+}
+
 async function run(task) {
   out.textContent = "Thinking…";
   prov.textContent = "";
-  // grab selection for research tasks
   let payload = {};
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     const sel = await chrome.tabs.sendMessage(tab.id, { type: "getSelection" }).catch(() => null);
     if (sel?.selection) payload.selection = sel.selection;
   } catch {}
-  const res = await chrome.runtime.sendMessage({ type: "task", task, payload });
-  out.textContent = res.output || res.error || "(no response)";
-  prov.textContent = res.agent ? `${res.agent}${res.provider ? " · " + res.provider : ""}` : "";
+
+  const res = await chrome.runtime.sendMessage({ type: "task", task, payload, history });
+
+  // If the router switched agents, this is a new topic — start a fresh thread.
+  if (res.agent && res.agent !== lastAgent) history = [];
+  lastAgent = res.agent || lastAgent;
+
+  const answer = res.output || res.error || "(no response)";
+  out.innerHTML = renderMd(answer);
+  prov.textContent = res.agent
+    ? `${res.agent}${res.provider ? " · " + res.provider : ""}` +
+      (typeof res.confidence === "number" ? ` · ${Math.round(res.confidence * 100)}%` : "")
+    : "";
+
+  // Record the turn so follow-ups have context (cap kept short).
+  if (!res.error) {
+    history.push({ role: "user", content: task });
+    history.push({ role: "assistant", content: answer });
+    history = history.slice(-8);
+    newBtn.style.display = "";
+    taskIn.placeholder = "Ask a follow-up…";
+  }
+}
+
+function resetChat() {
+  history = [];
+  lastAgent = null;
+  taskIn.placeholder = "Ask anything…";
+  newBtn.style.display = "none";
+  out.textContent = "Pick an action or type a request.";
+  prov.textContent = "";
 }
 
 document.querySelectorAll(".quick button").forEach(b => {
-  b.onclick = () => run(b.dataset.task);
+  if (!b.dataset.task) return;          // skip the "open humanizer" button
+  b.onclick = () => { resetChat(); run(b.dataset.task); };
 });
+newBtn.onclick = resetChat;
 document.getElementById("openHumanizer").onclick = () => {
   chrome.tabs.create({ url: chrome.runtime.getURL("src/humanizer/humanizer.html") });
 };

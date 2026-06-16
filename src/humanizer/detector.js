@@ -180,6 +180,50 @@
     return n;
   }
 
+  // ---- Punctuation profile ----
+  // AI prose leans on "formal" punctuation: serial/Oxford commas, semicolons,
+  // and mid-sentence colons. Humans use parentheticals, ellipses, dashes, and
+  // sentence fragments more. Returns 0..1 where 1 = AI-like punctuation.
+  function punctuationProfile(text, sents, wordCount) {
+    if (!wordCount) return 0;
+    const per100 = (n) => (n / wordCount) * 100;
+    const oxford = (text.match(/,\s+(?:and|or)\s+\w/gi) || []).length;
+    const semicolons = (text.match(/;/g) || []).length;
+    const colonsMid = (text.match(/\w:\s+[a-z]/g) || []).length; // colon mid-sentence
+    // Human informality markers (push the score DOWN).
+    const parens = (text.match(/\([^)]*\)/g) || []).length;
+    const ellipses = (text.match(/\.\.\.|…/g) || []).length;
+    const fragments = sents.filter((s) => s.split(/\s+/).length <= 4).length;
+    const exclaims = (text.match(/!/g) || []).length;
+
+    // Formal markers raise the AI signal; informal markers lower it.
+    const formal = per100(oxford) * 0.5 + per100(semicolons) * 1.2 + per100(colonsMid) * 1.0;
+    const informal = per100(parens) + per100(ellipses) * 1.5 +
+                     per100(fragments) * 0.4 + per100(exclaims) * 0.6;
+    return clamp((formal - informal) / 2.5, 0, 1);
+  }
+
+  // ---- Per-sentence AI score ----
+  // A lightweight per-sentence estimate so the UI can highlight the lines that
+  // read most like AI. Uses the cheap, sentence-local signals.
+  function scoreSentence(s) {
+    const ws = words(s);
+    const wc = ws.length;
+    if (wc < 4) return 0;
+    let score = 0;
+    // Phrase + word clichés in this sentence.
+    score += clamp(density(s, AI_PHRASES, wc) / 2, 0, 1) * 0.4;
+    score += clamp(density(s, AI_WORDS, wc) / 4, 0, 1) * 0.25;
+    // Antithesis / formulaic templates land hard at sentence level.
+    if (regexHits(s, ANTITHESIS)) score += 0.3;
+    const low = s.toLowerCase();
+    if (FORMULAIC_OPENERS.some((o) => low.startsWith(o))) score += 0.2;
+    // Long, comma-heavy, semicolon-using sentences read formal.
+    if (wc > 25) score += 0.1;
+    if (/;/.test(s)) score += 0.1;
+    return clamp(score, 0, 1);
+  }
+
   function detect(text) {
     const t = (text || "").trim();
     const ws = words(t);
@@ -238,16 +282,20 @@
     const formulaic = phraseHits(t, FORMULAIC_OPENERS.map((p) => p));
     const sigFormulaic = clamp(formulaic / 3, 0, 1);
 
+    // Punctuation profile (formal serial commas/semicolons/colons vs. informal).
+    const sigPunct = punctuationProfile(t, sents, wordCount);
+
     // Weighted blend. Repetition + cliché density are the strongest tells.
     const weights = [
-      [sigCliche, 0.24, "AI cliché / buzzword density", cliche.toFixed(1) + " / 100 words"],
-      [sigRepeat, 0.16, "Repeated phrasing", sigRepeat > 0.3 ? "reuses phrases (AI-like)" : "low repetition"],
-      [sigBurst, 0.14, "Sentence rhythm", burst > 0.5 ? "varied (human-like)" : "uniform (AI-like)"],
+      [sigCliche, 0.22, "AI cliché / buzzword density", cliche.toFixed(1) + " / 100 words"],
+      [sigRepeat, 0.15, "Repeated phrasing", sigRepeat > 0.3 ? "reuses phrases (AI-like)" : "low repetition"],
+      [sigBurst, 0.13, "Sentence rhythm", burst > 0.5 ? "varied (human-like)" : "uniform (AI-like)"],
       [sigOpeners, 0.10, "Repeated sentence openers", sigOpeners > 0.3 ? "same openings repeat" : "varied openings"],
-      [sigAntithesis, 0.08, "Antithesis templates", antithesisHits + " (\"not X, but Y\")"],
-      [sigVariety, 0.07, "Vocabulary variety", (variety * 100).toFixed(0) + "% unique"],
-      [sigHedge, 0.06, "Hedging / filler", hedge.toFixed(1) + " / 100 words"],
-      [sigThree, 0.05, "Rule-of-three lists", threes + " found"],
+      [sigPunct, 0.08, "Punctuation profile", sigPunct > 0.4 ? "formal (AI-like)" : "informal (human-like)"],
+      [sigAntithesis, 0.07, "Antithesis templates", antithesisHits + " (\"not X, but Y\")"],
+      [sigVariety, 0.06, "Vocabulary variety", (variety * 100).toFixed(0) + "% unique"],
+      [sigHedge, 0.05, "Hedging / filler", hedge.toFixed(1) + " / 100 words"],
+      [sigThree, 0.04, "Rule-of-three lists", threes + " found"],
       [sigFormulaic, 0.04, "Formulaic framing", formulaic + " openers/closers"],
       [sigNoContractions, 0.03, "Contraction use", contractions + " found"],
       [sigDash, 0.03, "Em-dash regularity", dashes + " dashes"],
@@ -280,7 +328,13 @@
       contribution: Math.round(val * 100),
     }));
 
-    return { score, label, signals, wordCount };
+    // Per-sentence scores so the UI can highlight the most AI-like lines.
+    const perSentence = sents.map((s) => ({
+      text: s,
+      score: Math.round(scoreSentence(s) * 100),
+    }));
+
+    return { score, label, signals, wordCount, perSentence };
   }
 
   global.Detector = { detect };

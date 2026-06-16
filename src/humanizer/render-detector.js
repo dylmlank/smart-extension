@@ -31,6 +31,32 @@
       )
       .join("");
 
+    // Per-sentence highlights: show the sentences that read most AI-like.
+    const esc = (s) =>
+      s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const sentColor = (s) =>
+      s >= 60 ? "#ef4444" : s >= 35 ? "#f59e0b" : "#22c55e";
+    let sentencesHtml = "";
+    if (Array.isArray(result.perSentence) && result.perSentence.length) {
+      const flagged = result.perSentence.filter((s) => s.score >= 35);
+      if (flagged.length) {
+        sentencesHtml = `
+          <div class="sent-head">Most AI-like sentences</div>
+          <ul class="sent-list">${flagged
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 6)
+            .map(
+              (s) => `<li class="sent-item" style="--sc:${sentColor(s.score)}">
+                <span class="sent-score" style="background:${sentColor(s.score)}">${s.score}</span>
+                <span class="sent-text">${esc(s.text)}</span>
+              </li>`
+            )
+            .join("")}</ul>`;
+      } else {
+        sentencesHtml = `<div class="sent-head sent-clean">No sentences stand out as AI-like ✓</div>`;
+      }
+    }
+
     el.innerHTML = `
       <div class="gauge-row">
         <div class="gauge" style="--val:${result.score}; --col:${col}">
@@ -43,7 +69,8 @@
             Higher = reads more like AI. This is an estimate, not proof.</div>
         </div>
       </div>
-      <ul class="signals">${signalsHtml}</ul>`;
+      <ul class="signals">${signalsHtml}</ul>
+      ${sentencesHtml}`;
   }
 
   global.renderDetector = renderDetector;

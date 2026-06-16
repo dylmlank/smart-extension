@@ -28,6 +28,12 @@
             background: var(--bg); color: var(--fg); }
     #go { background: var(--accent); color: #fff; border: none; border-radius: 10px;
           padding: 0 14px; cursor: pointer; }
+    #new { background: var(--card); color: var(--fg); border: 1px solid var(--border);
+           border-radius: 10px; padding: 0 11px; cursor: pointer; font-size: 15px; }
+    #new:hover { border-color: var(--accent); }
+    #out code { background: var(--border); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+    #out ul { margin: 4px 0; padding-left: 18px; }
+    #out b { color: var(--fg); }
     #out { margin: 0 14px 12px; padding: 12px; background: var(--card); border-radius: 10px;
            min-height: 40px; white-space: pre-wrap; font-size: 13px; line-height: 1.5; max-height: 280px; overflow:auto; }
     .meta { color: var(--muted); font-size: 11px; padding: 0 14px 10px; }
@@ -50,6 +56,7 @@
   </div>
   <div class="meta" style="padding-top:0">Type any task below — if no tool fits, it builds one. <a href="#" id="tools">My tools</a></div>
   <div class="input">
+    <button id="new" title="New conversation" style="display:none">↺</button>
     <input id="task" placeholder="Ask anything…" />
     <button id="go">→</button>
   </div>

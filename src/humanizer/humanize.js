@@ -278,6 +278,30 @@
     return out;
   }
 
+  // Real burstiness needs BOTH long and short sentences. varyLength() only
+  // splits; this merges some adjacent short sentences with a connector so the
+  // rhythm isn't a flat run of medium-length lines.
+  const MERGE_JOINS = [", and ", ", so ", " — ", ", but "];
+  function mergeShort(sentences, rnd) {
+    const out = [];
+    for (let i = 0; i < sentences.length; i++) {
+      const a = sentences[i], b = sentences[i + 1];
+      const aLen = a ? a.split(/\s+/).length : 0;
+      const bLen = b ? b.split(/\s+/).length : 0;
+      // Merge two consecutive short sentences ~half the time.
+      if (b && aLen <= 9 && bLen <= 11 && rnd(i) < 0.5) {
+        const join = MERGE_JOINS[Math.floor(rnd(i + 100) * MERGE_JOINS.length)];
+        let head = a.replace(/[.!?]+$/, "");
+        let tail = b.charAt(0).toLowerCase() + b.slice(1);
+        out.push(head + join + tail);
+        i++; // consumed b
+      } else {
+        out.push(a);
+      }
+    }
+    return out;
+  }
+
   // Light contractions make text read less formal/robotic.
   function contract(text) {
     const map = [
@@ -349,21 +373,73 @@
       .replace(/^\s+|\s+$/g, "");
   }
 
+  // Synonym rotation: common words get several human alternatives, chosen by a
+  // per-run seed so the humanizer doesn't ALWAYS make the identical swap (a
+  // constant substitution is itself a detectable fingerprint). Picks vary run
+  // to run and across occurrences within a run.
+  // Only words whose alternatives are grammatically interchangeable in place
+  // (no change to the following preposition/argument structure).
+  const SYNONYMS = {
+    important: ["key", "big", "central"],
+    however: ["but", "still", "though"],
+    many: ["lots of", "plenty of", "tons of"],
+    "for example": ["for instance", "say"],
+    because: ["since", "as"],
+    really: ["pretty", "quite", "genuinely"],
+    "a lot of": ["lots of", "plenty of", "loads of"],
+    significant: ["big", "major", "real"],
+    "in addition": ["also", "on top of that", "plus"],
+  };
+  function rotateSynonyms(text, rnd) {
+    let out = text;
+    let k = 0;
+    for (const [word, alts] of Object.entries(SYNONYMS)) {
+      const re = new RegExp("\\b" + word.replace(/ /g, "\\s+") + "\\b", "gi");
+      out = out.replace(re, (m) => {
+        const pick = alts[Math.floor(rnd(k++) * alts.length)];
+        // Preserve leading capitalization of the original word.
+        return /^[A-Z]/.test(m) ? pick.charAt(0).toUpperCase() + pick.slice(1) : pick;
+      });
+    }
+    return out;
+  }
+
+  // Per-run seed: a quick hash of the input plus a salt so successive runs on
+  // the same text vary, but a single run stays internally consistent.
+  let runSalt = 0;
+  function makeRnd(text) {
+    const salt = runSalt++;
+    let h = 2166136261;
+    for (let i = 0; i < text.length; i++) {
+      h ^= text.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    const base = (h >>> 0) % 100000;
+    return (i) => {
+      // Fold the run salt in directly so successive runs diverge.
+      let x = Math.sin((base + salt * 49.137 + (i + 1) * 12.9898)) * 43758.5453;
+      return x - Math.floor(x);
+    };
+  }
+
   // mode: "balanced" | "simple" | "casual"
   function humanize(text, mode) {
     if (!text || !text.trim()) return "";
     mode = mode || "balanced";
+    const rnd = makeRnd(text);
 
     let t = clean(text);
     t = applyPhrases(t);
     t = breakAntithesis(t);     // kill "not just X, but Y" templates
     t = dropFormulaic(t);       // strip "In conclusion", "First and foremost"…
+    t = rotateSynonyms(t, rnd); // vary common-word swaps run to run
 
     let sentences = splitSentences(t);
     sentences = thinTransitions(sentences);
     sentences = varyOpeners(sentences);   // break repeated sentence openers
 
     if (mode !== "casual") sentences = varyLength(sentences);
+    sentences = mergeShort(sentences, rnd); // merge some short lines (burstiness)
     if (mode === "casual") sentences = casualTouch(sentences);
 
     t = sentences.join(" ");

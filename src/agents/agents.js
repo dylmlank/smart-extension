@@ -30,10 +30,15 @@ const tools = {
   }
 };
 
-async function ask(system, user) {
+// `history` is an optional array of prior {role, content} turns so the agent
+// can answer follow-up questions in context. We cap it to the last few turns
+// to keep prompts short on the free tier.
+async function ask(system, user, history) {
   const ctx = await insightContext();
+  const past = Array.isArray(history) ? history.slice(-6) : [];
   const messages = [
     { role: "system", content: ctx ? `${system}\n\n${ctx}` : system },
+    ...past,
     { role: "user", content: user }
   ];
   return chat(messages);
@@ -43,10 +48,12 @@ async function ask(system, user) {
 export const AGENTS = {
   summarizer: {
     desc: "Summarize the current page or answer questions about it.",
-    async run(task) {
-      const { text } = await tools.getActiveTabText();
-      const sys = "Summarize web pages clearly and concisely. If asked a question, answer using only the page.";
-      const { text: out, provider } = await ask(sys, `PAGE:\n${text}\n\nTASK: ${task}`);
+    async run(task, payload) {
+      // On a follow-up we already have the page in history — don't re-extract.
+      const hasHistory = payload?.history?.length;
+      const pageBlock = hasHistory ? "" : `PAGE:\n${(await tools.getActiveTabText()).text}\n\n`;
+      const sys = "Summarize web pages clearly and concisely. If asked a question, answer using only the page. Keep answers tight.";
+      const { text: out, provider } = await ask(sys, `${pageBlock}TASK: ${task}`, payload?.history);
       return { output: out, provider };
     }
   },
@@ -77,7 +84,7 @@ export const AGENTS = {
     async run(task, payload) {
       const sel = payload?.selection || (await tools.getActiveTabText()).text.slice(0, 2000);
       const sys = "You are a research assistant. Explain clearly, then give 2-3 follow-up angles to explore.";
-      const { text: out, provider } = await ask(sys, `CONTEXT:\n${sel}\n\nTASK: ${task}`);
+      const { text: out, provider } = await ask(sys, `CONTEXT:\n${sel}\n\nTASK: ${task}`, payload?.history);
       const { researchLog = [] } = await chrome.storage.local.get("researchLog");
       researchLog.push({ t: Date.now(), task, note: out.slice(0, 500) });
       await chrome.storage.local.set({ researchLog: researchLog.slice(-100) });
@@ -132,35 +139,64 @@ export const AGENTS = {
   }
 };
 
-// ---- Orchestrator: route a free-form task to the right agent ----
-export async function orchestrate(task, payload) {
-  // Cheap keyword routing first; LLM routing as fallback.
-  const t = task.toLowerCase();
-  let name =
-    /tab|group|organi|close|dedup/.test(t) ? "organizer" :
-    /focus|distract|time|productiv/.test(t) ? "focus" :
-    /research|explain|note|study|learn/.test(t) ? "researcher" :
-    /summar|tl;?dr|what.*page|question/.test(t) ? "summarizer" :
-    null;
+// Strong keyword signals — when these clearly match, skip the LLM round-trip.
+function keywordRoute(t) {
+  const tests = [
+    ["organizer", /\b(tabs?|group|organi[sz]e|declutter|close|dedup|duplicate)\b/],
+    ["focus", /\b(focus|distract|time on|productiv|how am i doing|screen time)\b/],
+    ["researcher", /\b(research|explain|what does|note|study|look ?up|tell me about)\b/],
+    ["summarizer", /\b(summar|tl;?dr|key points|gist|what.*(page|article|this))\b/],
+  ];
+  for (const [name, re] of tests) if (re.test(t)) return name;
+  return null;
+}
 
+// LLM router: returns { agent, confidence } so we only fall back to the
+// self-building agent when the model is genuinely unsure.
+async function llmRoute(task) {
+  const menu = Object.entries(AGENTS).map(([k, v]) => `${k}: ${v.desc}`).join("\n");
+  const { text } = await ask(
+    `Route the user's task to exactly ONE agent. ` +
+    `Reply ONLY as JSON: {"agent":"<name>","confidence":0-1}. ` +
+    `Use "builder" only if no specialist fits. Agents:\n${menu}`,
+    task
+  );
+  try {
+    const j = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] || "{}");
+    const agent = String(j.agent || "").toLowerCase().trim();
+    const confidence = typeof j.confidence === "number" ? j.confidence : 0.5;
+    if (AGENTS[agent]) return { agent, confidence };
+  } catch {}
+  // Couldn't parse — treat the first token as the answer, low confidence.
+  const first = text.trim().split(/\s+/)[0].toLowerCase();
+  return { agent: AGENTS[first] ? first : "builder", confidence: 0.3 };
+}
+
+// ---- Orchestrator: route a free-form task to the right agent ----
+// `history` (optional) is prior [{role, content}] turns for follow-ups.
+export async function orchestrate(task, payload, history) {
+  const t = task.toLowerCase();
+
+  // 1) Cheap keyword routing for clear cases.
+  let name = keywordRoute(t);
+  let confidence = name ? 0.9 : 0;
+
+  // 2) Otherwise ask the LLM, with a confidence score.
   if (!name) {
-    const menu = Object.entries(AGENTS).map(([k, v]) => `${k}: ${v.desc}`).join("\n");
-    const { text } = await ask(
-      `Route the task to ONE agent. Reply with only the agent name.\n` +
-      `If no specialist clearly fits, choose "builder" — it can create a tool for anything.\nAgents:\n${menu}`,
-      task
-    );
-    name = text.trim().split(/\s+/)[0].toLowerCase();
+    const r = await llmRoute(task);
+    name = r.agent;
+    confidence = r.confidence;
+    // Low confidence in a specialist => let the builder handle it instead.
+    if (confidence < 0.45 && name !== "builder") name = "builder";
   }
-  // Anything unrecognized falls to the self-extending builder, not summarizer.
   if (!AGENTS[name]) name = "builder";
 
   try {
-    const res = await AGENTS[name].run(task, payload);
+    const res = await AGENTS[name].run(task, { ...(payload || {}), history });
     await logAction({ agent: name, task: task.slice(0, 80), outcome: "ok via " + res.provider });
-    return { agent: name, ...res };
+    return { agent: name, confidence, ...res };
   } catch (e) {
     await logAction({ agent: name, task: task.slice(0, 80), outcome: "error", error: String(e.message || e) });
-    return { agent: name, output: "Error: " + (e.message || e), error: true };
+    return { agent: name, confidence, output: "Error: " + (e.message || e), error: true };
   }
 }
