@@ -535,6 +535,42 @@
     return out;
   }
 
+  // ---- Burstiness injection ----
+  // The dominant tells in a modern detector are STRUCTURAL: uniform sentence
+  // length (low burstiness) and flat per-sentence perplexity. Rule swaps don't
+  // touch those. This pass deliberately manufactures rhythm variance the way
+  // humans naturally write: it splits some medium/long sentences into a punchy
+  // short fragment + the rest, and it does so unevenly (not every sentence) so
+  // the result is a genuine mix of short and long lines. Runs after merging so
+  // the two passes together push variance UP, not toward a uniform middle.
+  const SPLIT_CONNECTORS =
+    /^(.*?\b\w[^,]{8,}?)\s+(?:,?\s*)(and|but|so|because|which|while|since|though|yet|as)\s+(.*)$/i;
+  function injectBurstiness(sentences, rnd) {
+    const out = [];
+    sentences.forEach((s, i) => {
+      const wlen = s.split(/\s+/).length;
+      // Split medium/long sentences ~55% of the time at a natural conjunction,
+      // turning one even-length line into a long+short (or short+long) pair.
+      if (wlen >= 14 && rnd(i + 7) < 0.55) {
+        const m = s.match(SPLIT_CONNECTORS);
+        if (m && m[1].split(/\s+/).length >= 4 && m[3].split(/\s+/).length >= 3) {
+          let a = m[1].replace(/[.!?,]*$/, "") + ".";
+          // Keep the conjunction sometimes as a sentence-initial fragment lead
+          // ("Because X." / "So Y.") which reads human and varies the opener.
+          const keepConj = rnd(i + 19) < 0.4 &&
+            /^(but|so|because|yet)$/i.test(m[2]);
+          let b = keepConj
+            ? m[2].charAt(0).toUpperCase() + m[2].slice(1) + " " + m[3]
+            : m[3].charAt(0).toUpperCase() + m[3].slice(1);
+          out.push(a, b);
+          return;
+        }
+      }
+      out.push(s);
+    });
+    return out;
+  }
+
   // Light contractions make text read less formal/robotic.
   function contract(text) {
     const map = [
@@ -727,7 +763,8 @@
     sentences = varyOpeners(sentences);   // break repeated sentence openers
 
     if (mode !== "casual") sentences = varyLength(sentences);
-    sentences = mergeShort(sentences, rnd); // merge some short lines (burstiness)
+    sentences = mergeShort(sentences, rnd);      // merge some short lines (burstiness)
+    sentences = injectBurstiness(sentences, rnd); // split some long lines (burstiness)
     if (mode === "casual") sentences = casualTouch(sentences);
 
     t = sentences.join(" ");

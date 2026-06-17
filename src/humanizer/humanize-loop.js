@@ -20,15 +20,20 @@
   function promptFor(mode, round) {
     const base =
       "Rewrite the text so it reads as natural human writing. " +
-      "Keep it concise and simple. Use short, plain sentences with varied length. " +
+      "MOST IMPORTANT: vary sentence length a lot. Put short, punchy sentences " +
+      "(3 to 6 words) right next to longer ones, so the rhythm is uneven the way " +
+      "real people write. Pick specific, concrete, sometimes surprising words " +
+      "instead of safe generic ones. Use contractions. " +
       "Cut filler, buzzwords, and AI cliches (e.g. 'leverage', 'foster', 'landscape', " +
       "'delve', 'in today's world', 'it is important to note'). " +
       "Do NOT use hyphens or dashes of any kind. Keep the original meaning. " +
       "Output only the rewritten text, nothing else.";
     const harder =
-      " This text still reads like AI. Be more aggressive: break up uniform " +
-      "sentences, vary rhythm hard, use everyday words and contractions, and " +
-      "remove every remaining cliche.";
+      " This text still reads like AI. The detector still sees uniform sentence " +
+      "rhythm and predictable word choice. Be far more aggressive: smash the even " +
+      "rhythm (mix 3-word sentences with 25-word ones), start every sentence " +
+      "differently, swap predictable words for vivid specific ones, and add " +
+      "natural contractions. Remove every remaining cliche.";
     const toneMap = {
       simple: " Aim for plain, sixth-grade-level clarity.",
       casual: " Use a relaxed, conversational tone.",

@@ -93,6 +93,34 @@
     "let that sink in", "you guessed it", "that's right", "and guess what",
   ];
 
+  // ---- Unicode / evasion normalization ----
+  // A cheap, high-value defense most homegrown detectors skip: strip the tricks
+  // used to fool perplexity tools. Zero-width characters (inserted between
+  // letters to break tokenization) are removed, and common confusable homoglyphs
+  // (Cyrillic/Greek look-alikes swapped in for Latin letters) are folded back to
+  // Latin so the rest of the detector sees the real words. We also NFKC-normalize
+  // to collapse full-width and styled-letter variants. Without this, pasting
+  // "humanized" text with a few swapped letters silently tanks every signal.
+  const CONFUSABLES = {
+    // Cyrillic -> Latin
+    "а":"a","е":"e","о":"o","р":"p","с":"c","у":"y","х":"x","ѕ":"s","і":"i",
+    "ј":"j","ԛ":"q","ԝ":"w","А":"A","Е":"E","О":"O","Р":"P","С":"C","Т":"T",
+    "Х":"X","В":"B","Н":"H","К":"K","М":"M",
+    // Greek -> Latin
+    "ο":"o","ν":"v","τ":"t","α":"a","ρ":"p","ι":"i","κ":"k","Α":"A","Β":"B",
+    "Ε":"E","Ζ":"Z","Η":"H","Ι":"I","Κ":"K","Μ":"M","Ν":"N","Ο":"O","Ρ":"P",
+    "Τ":"T","Υ":"Y","Χ":"X",
+  };
+  function normalizeText(text) {
+    let t = String(text || "");
+    try { t = t.normalize("NFKC"); } catch { /* older engines */ }
+    // Remove zero-width / invisible characters used to split tokens.
+    t = t.replace(/[​-‍⁠﻿­͏ᅟᅠ឴឵ㅤ]/g, "");
+    // Fold confusable homoglyphs back to Latin.
+    t = t.replace(/[^\x00-\x7F]/g, (ch) => CONFUSABLES[ch] || ch);
+    return t;
+  }
+
   function words(text) {
     return (text.toLowerCase().match(/[a-z']+/g) || []);
   }
@@ -378,7 +406,8 @@
   }
 
   function detect(text) {
-    const t = (text || "").trim();
+    // Normalize away zero-width / homoglyph evasion BEFORE any signal runs.
+    const t = normalizeText(text).trim();
     const ws = words(t);
     const wordCount = ws.length;
 
@@ -476,6 +505,22 @@
     const sigFiller = P ? P.fillerDensity(t) : 0;
     const hasPredict = !!P;
 
+    // Perplexity engine: a real surprisal/burstiness model (see perplexity.js).
+    // GPTZero-style burstiness — the spread of per-sentence perplexity — is a
+    // strong, correctly-signed structural tell that generalizes to modern,
+    // buzzword-free AI prose the lexical signals miss. We surface its burstiness
+    // score as a corroborating signal. The raw word-surprisal score is NOT used
+    // as a standalone AI signal: the bundled corpus is literary, so on
+    // off-domain modern text raw word-rarity tracks vocabulary/domain more than
+    // AI-ness (it was measured to be unreliable/inverted) — we keep it only to
+    // dampen, never to inflate.
+    const PX = (typeof global !== "undefined" && global.Perplexity) ||
+               (typeof window !== "undefined" && window.Perplexity) || null;
+    const pxBurst = PX ? PX.burstiness(t) : { score: 0, hasModel: false };
+    const sigPplxBurst = (pxBurst && pxBurst.hasModel && !pxBurst.low)
+      ? pxBurst.score : 0;
+    const hasPplx = !!(PX && pxBurst && pxBurst.hasModel && !pxBurst.low);
+
     // Participial/adverbial sentence openers ("Leveraging X,...", "Notably,...")
     // and uniform comma cadence — two distinctive, correctly-signed AI tells.
     const sigOpenerStyle = openerStyleSignal(sents);
@@ -487,25 +532,41 @@
     // entities/facts. Correctly signed (high on AI advice, ~0 on human facts).
     const sigAbstraction = adviceAbstraction(t, wordCount);
 
+    // Weights are evidence-tuned against tests/labeled.json by measuring each
+    // signal's AI-vs-human separation. The two STRUCTURAL signals that generalize
+    // to modern, buzzword-free AI — sentence-rhythm burstiness and GPTZero-style
+    // per-sentence perplexity burstiness — now carry the most weight, because the
+    // lexical/cliché signals (which only catch old buzzword-heavy AI) were the
+    // reason clean modern AI scored as human. The cliché signal stays strong so
+    // obvious AI is still caught hard, but it no longer dominates the score.
     const weights = [
-      [sigCliche, 0.19, "AI cliché / buzzword density", cliche.toFixed(1) + " / 100 words"],
-      [sigNoContractions, 0.13, "Contraction use", contractions + " found"],
-      [sigBurst, 0.12, "Sentence rhythm", burst > 0.5 ? "varied (human-like)" : "uniform (AI-like)"],
-      [sigFiller, 0.12, "Filler constructions", sigFiller > 0.3 ? "vague hedges (AI-like)" : "low filler"],
-      [sigEnum, 0.10, "Enumeration / tutorial voice", sigEnum > 0.3 ? "lists/steps (AI-like)" : "low"],
-      [sigCasualAI, 0.08, "Casual-AI phrases", casualAI + " (\"let's be real\"…)"],
-      [sigOpenerStyle, 0.06, "Participial / adverb openers", sigOpenerStyle > 0.3 ? "\"Leveraging X,…\" (AI-like)" : "varied"],
-      [sigAbstraction, 0.06, "Generic-advice abstraction", sigAbstraction > 0.3 ? "abstract self-help (AI-like)" : "concrete"],
-      [sigHedge, 0.04, "Hedging / filler", hedge.toFixed(1) + " / 100 words"],
-      [sigRepeat, 0.04, "Repeated phrasing", sigRepeat > 0.3 ? "reuses phrases (AI-like)" : "low repetition"],
-      [sigFormulaic, 0.04, "Formulaic framing", formulaic + " openers/closers"],
-      [sigThree, 0.03, "Rule-of-three lists", threes + " found"],
-      [sigOpeners, 0.03, "Repeated sentence openers", sigOpeners > 0.3 ? "same openings repeat" : "varied openings"],
+      [sigBurst, 0.20, "Sentence rhythm", burst > 0.5 ? "varied (human-like)" : "uniform (AI-like)"],
+      [sigCliche, 0.15, "AI cliché / buzzword density", cliche.toFixed(1) + " / 100 words"],
+      [sigPplxBurst, 0.12, "Perplexity burstiness", sigPplxBurst > 0.4 ? "flat/uniform (AI-like)" : "varied (human-like)"],
+      [sigFiller, 0.10, "Filler constructions", sigFiller > 0.3 ? "vague hedges (AI-like)" : "low filler"],
+      [sigEnum, 0.09, "Enumeration / tutorial voice", sigEnum > 0.3 ? "lists/steps (AI-like)" : "low"],
+      [sigNoContractions, 0.06, "Contraction use", contractions + " found"],
+      [sigCasualAI, 0.06, "Casual-AI phrases", casualAI + " (\"let's be real\"…)"],
+      [sigOpenerStyle, 0.05, "Participial / adverb openers", sigOpenerStyle > 0.3 ? "\"Leveraging X,…\" (AI-like)" : "varied"],
+      [sigAbstraction, 0.05, "Generic-advice abstraction", sigAbstraction > 0.3 ? "abstract self-help (AI-like)" : "concrete"],
       [sigCommaCadence, 0.03, "Comma cadence", sigCommaCadence > 0.4 ? "uniform (AI-like)" : "clustered (human-like)"],
-      [sigPunct, 0.02, "Punctuation profile", sigPunct > 0.4 ? "formal (AI-like)" : "informal (human-like)"],
-      [sigAntithesis, 0.02, "Antithesis templates", antithesisHits + " (\"not X, but Y\")"],
-      [sigVariety, 0.01, "Vocabulary variety", (variety * 100).toFixed(0) + "% unique"],
+      [sigRepeat, 0.03, "Repeated phrasing", sigRepeat > 0.3 ? "reuses phrases (AI-like)" : "low repetition"],
+      [sigHedge, 0.02, "Hedging / filler", hedge.toFixed(1) + " / 100 words"],
+      [sigFormulaic, 0.02, "Formulaic framing", formulaic + " openers/closers"],
+      [sigOpeners, 0.01, "Repeated sentence openers", sigOpeners > 0.3 ? "same openings repeat" : "varied openings"],
+      [sigPunct, 0.005, "Punctuation profile", sigPunct > 0.4 ? "formal (AI-like)" : "informal (human-like)"],
+      [sigAntithesis, 0.005, "Antithesis templates", antithesisHits + " (\"not X, but Y\")"],
+      [sigVariety, 0.005, "Vocabulary variety", (variety * 100).toFixed(0) + "% unique"],
+      [sigThree, 0.005, "Rule-of-three lists", threes + " found"],
     ];
+
+    // If the perplexity engine isn't loaded, drop its signal and re-normalize so
+    // a missing table doesn't deflate the score.
+    if (!hasPplx) {
+      for (let i = weights.length - 1; i >= 0; i--) {
+        if (weights[i][2] === "Perplexity burstiness") weights.splice(i, 1);
+      }
+    }
 
     // Drop the data-driven filler signal if the predictability module isn't
     // present, so a missing table doesn't skew the score.
@@ -515,8 +576,12 @@
       }
     }
 
+    // Re-normalize weights so they always sum to 1, even after dropping signals
+    // for missing modules. This keeps the 0..100 scale stable regardless of which
+    // optional engines (perplexity, predictability) are loaded.
+    const wSum = weights.reduce((a, w) => a + w[1], 0) || 1;
     let score = 0;
-    for (const [val, w] of weights) score += val * w;
+    for (const [val, w] of weights) score += val * (w / wSum);
     score = score * 100;
 
     // Heavy *phrase-level* cliché use is a strong tell — floor the score so a
@@ -568,6 +633,51 @@
                            sigEnum >= 0.3;
     if (moderate >= 3 && hasContentTell) score = Math.max(score, 58);
     if (moderate >= 4 && hasContentTell) score = Math.max(score, 68);
+
+    // Structural AI fingerprint (catches clean, buzzword-free modern AI).
+    // Modern LLM prose often has NO clichés/filler — so the content-gated floor
+    // above never fires — yet it still carries the statistical signature trusted
+    // detectors key on: flat sentence rhythm AND flat per-sentence perplexity
+    // (low burstiness on BOTH axes) plus the formal register (no contractions,
+    // serial commas/semicolons). Humans almost never combine all three unless
+    // writing dense, concrete factual prose — which the specificity signal
+    // detects and exempts. So we floor when the STRUCTURE is AI-flat and the text
+    // is NOT concrete/specific, independent of any lexical tell. This is the
+    // single change that fixes "clean AI reads as human".
+    // Markers of genuine casual/personal human writing. If ANY of these is
+    // present the structural floor is suppressed entirely — real people writing
+    // casually trip "formal structure" signals by accident (short anecdotes have
+    // uniform rhythm), and flagging them is the worst false positive. First-
+    // person voice, contractions, exclamations, and informal lead-ins ("okay
+    // so", "honestly", "lol") never co-occur with the flat AI-explainer register.
+    const lowT = t.toLowerCase();
+    const casualHuman =
+      contractionRate >= 0.015 ||
+      /\b(i|i'm|i've|i'd|my|me|we|our)\b/.test(lowT) && /\b(i|i'm|i've|my)\b/.test(lowT) ||
+      (t.match(/!/g) || []).length >= 1 ||
+      /^(okay|ok|so|honestly|lol|yeah|well|anyway|look),?\s/i.test(t) ||
+      /\b(gonna|wanna|kinda|sorta|yeah|nope|honestly|basically)\b/.test(lowT);
+
+    let structural =
+      (sigBurst >= 0.55 ? 1 : 0) +               // clearly uniform sentence length
+      (hasPplx && sigPplxBurst >= 0.5 ? 1 : 0) + // clearly flat per-sentence perplexity
+      (sigNoContractions >= 0.9 ? 1 : 0) +       // formal: essentially no contractions
+      (sigPunct >= 0.35 ? 1 : 0) +               // formal punctuation
+      (sigCommaCadence >= 0.45 ? 1 : 0);         // uniform comma cadence
+    // Concrete human writing (dates, proper nouns, quotes, numbers) is the
+    // signature of real expository prose — it strongly discounts the structural
+    // count so factual human essays aren't floored.
+    if (sigSpecific >= 0.3) structural -= 1;
+    if (sigSpecific >= 0.55) structural -= 2;
+    // Only floor when the text is flat on MULTIPLE structural axes, has NO casual-
+    // human markers, and isn't concrete/specific. This is deliberately strict:
+    // statistical structure alone has a hard false-positive floor (the same trap
+    // that makes ESL/factual human writing read as AI in every detector), so we
+    // require a strong, clean structural fingerprint before flooring.
+    if (!casualHuman && sigSpecific < 0.3) {
+      if (structural >= 4) score = Math.max(score, 64);
+      else if (structural >= 3) score = Math.max(score, 56);
+    }
 
     // Generic-advice abstraction: smooth, buzzword-free AI advice the structural
     // floor now (correctly) ignores still needs catching. Abstract self-help

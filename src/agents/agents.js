@@ -125,7 +125,7 @@ export const AGENTS = {
         concise: "Make it as concise as possible without losing meaning. Return ONLY the rewrite.",
         expand: "Expand with more detail and clarity, staying on topic. Return ONLY the rewrite.",
         friendly: "Rewrite to sound warm and approachable. Return ONLY the rewrite.",
-        humanize: "Rewrite to sound natural and human: vary sentence length, cut clichés and corporate filler, use light contractions. Return ONLY the rewrite.",
+        humanize: "Rewrite to read human. Vary sentence length hard: mix very short sentences with long ones. Pick specific, surprising words, not safe generic ones. Use contractions, cut clichés. No dashes. Return ONLY the rewrite.",
       };
       const instruction = STYLES[style] ||
         "Improve this text: fix errors and make it clearer and more natural. Return ONLY the improved text.";
