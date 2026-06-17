@@ -405,6 +405,97 @@
     return clamp(score, 0, 1);
   }
 
+  // ---- Verdict ladder (ZeroGPT-style) ----
+  // A graded label string mapped from the 0..100 score, instead of just three
+  // buckets. Reads like the verdicts trusted detectors show users.
+  function verdictFor(score) {
+    if (score >= 85) return "Your text is most likely AI generated";
+    if (score >= 70) return "Likely AI generated";
+    if (score >= 55) return "Mixed signals — leans AI";
+    if (score >= 45) return "Mixed signals — some AI, some human";
+    if (score >= 30) return "Most likely human, with minor AI-like parts";
+    if (score >= 15) return "Your text is likely human written";
+    return "Your text is human written";
+  }
+
+  // ---- Confidence band (GPTZero-style honesty) ----
+  // Scores near the middle of the range are genuinely uncertain; scores near the
+  // extremes are confident. Short text is always low confidence. We report this
+  // rather than implying false precision.
+  function confidenceFor(score, lowConfidence) {
+    if (lowConfidence) return { level: "low", note: "Low confidence — short text has fewer signals." };
+    const dist = Math.abs(score - 50);            // distance from the fence
+    if (dist >= 30) return { level: "high", note: "High confidence." };
+    if (dist >= 15) return { level: "medium", note: "Moderate confidence." };
+    return { level: "low", note: "Low confidence — this text sits near the human/AI boundary." };
+  }
+
+  // ---- Text metrics panel (ZeroGPT-style) ----
+  // Pure-JS readout shown alongside the verdict: counts + reading/speaking time
+  // + the top repeated content words (keyword density).
+  const STOPWORDS = new Set(["the","a","an","and","or","but","of","to","in","on",
+    "for","with","as","is","are","was","were","be","been","being","it","its","this",
+    "that","these","those","at","by","from","up","out","if","then","so","than","too",
+    "very","can","will","just","not","no","you","your","we","our","they","their","i",
+    "he","she","his","her","them","us","my","me","do","does","did","has","have","had",
+    "about","into","over","also","more","most","some","such","only","what","which","who"]);
+  function textMetrics(text, ws, sents) {
+    const chars = text.length;
+    const charsNoSpace = text.replace(/\s/g, "").length;
+    const lines = (text.match(/\n/g) || []).length + 1;
+    const wordCount = ws.length;
+    const sentenceCount = sents.length;
+    const avgWordsPerSentence = sentenceCount ? +(wordCount / sentenceCount).toFixed(1) : 0;
+    const readingTimeSec = Math.round((wordCount / 200) * 60);   // ~200 wpm
+    const speakingTimeSec = Math.round((wordCount / 130) * 60);  // ~130 wpm
+    // Keyword density: top content words by frequency (excluding stopwords).
+    const freq = new Map();
+    for (const w of ws) {
+      if (w.length < 3 || STOPWORDS.has(w)) continue;
+      freq.set(w, (freq.get(w) || 0) + 1);
+    }
+    const keywords = [...freq.entries()]
+      .filter(([, c]) => c > 1)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([word, count]) => ({ word, count, pct: +((count / wordCount) * 100).toFixed(1) }));
+    return {
+      chars, charsNoSpace, lines, wordCount, sentenceCount,
+      avgWordsPerSentence, readingTimeSec, speakingTimeSec, keywords,
+    };
+  }
+
+  // ---- Plain-English explanation tags (GPTZero-style) ----
+  // Human-readable reasons, split into "reads AI" vs "reads human", derived from
+  // the same signals that drive the score. These tell the user WHY in words.
+  function explanationTags(ctx) {
+    const ai = [], human = [];
+    const { sigBurst, sigPplxBurst, hasPplx, sigCliche, sigFiller, sigEnum,
+            sigNoContractions, sigPunct, sigOpenerStyle, sigAbstraction,
+            sigCasualAI, casualAI, sigSpecific, contractionRate, avgLen,
+            exclaims, quotes, firstPerson } = ctx;
+    // AI-leaning reasons
+    if (sigBurst >= 0.5) ai.push({ tag: "Monotonous rhythm", why: "Sentences are similar in length — little variation." });
+    if (hasPplx && sigPplxBurst >= 0.45) ai.push({ tag: "Flat predictability", why: "Each sentence is about as predictable as the next." });
+    if (sigCliche >= 0.3) ai.push({ tag: "Generic phrasing", why: "Leans on buzzwords and stock phrases AI overuses." });
+    if (sigFiller >= 0.4) ai.push({ tag: "Vague filler", why: "Fluent but contentless hedging ('can help', 'a wide range of')." });
+    if (sigEnum >= 0.4) ai.push({ tag: "Listicle scaffolding", why: "Explicit 'First… Second… Finally…' or step-by-step framing." });
+    if (sigNoContractions >= 0.85 && avgLen >= 14) ai.push({ tag: "Robotic formality", why: "Formal register with no contractions." });
+    if (sigOpenerStyle >= 0.4) ai.push({ tag: "Templated openers", why: "Sentences open with participial/adverb phrases ('Leveraging X,…')." });
+    if (sigAbstraction >= 0.4) ai.push({ tag: "Abstract advice", why: "Motivational self-help register without concrete detail." });
+    if (sigPunct >= 0.4) ai.push({ tag: "Formal punctuation", why: "Serial commas, semicolons, and mid-sentence colons." });
+    // Human-leaning reasons
+    if (sigBurst < 0.35) human.push({ tag: "Varied rhythm", why: "Sentence length swings — a human hallmark." });
+    if (contractionRate >= 0.02) human.push({ tag: "Personal tone", why: "Uses contractions and informal phrasing." });
+    if (firstPerson) human.push({ tag: "First-person voice", why: "Speaks from personal experience ('I', 'my', 'we')." });
+    if (exclaims >= 1) human.push({ tag: "Expressive punctuation", why: "Uses exclamation marks / informal emphasis." });
+    if (quotes >= 1) human.push({ tag: "Direct quotes", why: "Includes quoted speech or sources." });
+    if (sigSpecific >= 0.4) human.push({ tag: "Concrete detail", why: "Names specific dates, places, numbers, or proper nouns." });
+    if (casualAI === 0 && sigCliche < 0.15 && sigFiller < 0.2 && !ai.length)
+      human.push({ tag: "No AI tells", why: "None of the common AI fingerprints are present." });
+    return { ai, human };
+  }
+
   function detect(text) {
     // Normalize away zero-width / homoglyph evasion BEFORE any signal runs.
     const t = normalizeText(text).trim();
@@ -451,8 +542,13 @@
     const dashes = (t.match(/—|–/g) || []).length;
     const sigDash = clamp((dashes / sents.length) / 0.5, 0, 1);
 
-    // Contractions: humans use them more in most registers.
-    const contractions = (t.match(/\b\w+'\w+\b/g) || []).length;
+    // Contractions: humans use them more in most registers. Count only GENUINE
+    // contractions (negations, pronoun+auxiliary, common reductions) — NOT
+    // possessives like "today's" or "organization's", which read formal and were
+    // previously inflating the contraction count (masking the no-contraction AI
+    // signal and mislabeling formal AI prose as "personal tone").
+    const CONTRACTION_RE = /\b(?:\w+n't|i'm|(?:you|we|they|i)'(?:re|ve|ll|d)|(?:he|she|it|that|there|who|what|here)'(?:s|ll|d|re)|let's|y'all|ain't|gonna|wanna|gotta)\b/gi;
+    const contractions = (t.match(CONTRACTION_RE) || []).length;
     const contractionRate = contractions / wordCount;
     const sigNoContractions = clamp((0.02 - contractionRate) / 0.02, 0, 1);
 
@@ -732,13 +828,64 @@
       contribution: Math.round(val * 100),
     }));
 
-    // Per-sentence scores so the UI can highlight the most AI-like lines.
-    const perSentence = sents.map((s) => ({
-      text: s,
-      score: Math.round(scoreSentence(s) * 100),
-    }));
+    // Per-sentence scores so the UI can highlight every line, color-coded by
+    // AI-likelihood (ZeroGPT-style). We blend the cheap lexical sentence score
+    // with the sentence's perplexity surprisal so flat, buzzword-free AI lines
+    // still light up. tier: human | low | mid | high.
+    const sentSurp = (PX && PX.sentenceSurprisals) ? PX.sentenceSurprisals(t) : null;
+    const perSentence = sents.map((s, i) => {
+      let sc = scoreSentence(s) * 100;
+      // Low per-sentence surprisal (predictable wording) nudges the score up.
+      if (sentSurp && sentSurp[i] != null && PX.surprisalToAiScore) {
+        sc = Math.max(sc, PX.surprisalToAiScore(sentSurp[i]) * 70);
+      }
+      sc = Math.round(clamp(sc, 0, 100));
+      const tier = sc >= 60 ? "high" : sc >= 40 ? "mid" : sc >= 25 ? "low" : "human";
+      return { text: s, score: sc, tier };
+    });
 
-    return { score, label, signals, wordCount, perSentence, lowConfidence };
+    // ZeroGPT-style verdict ladder + GPTZero-style confidence band.
+    const verdict = verdictFor(score);
+    const confidence = confidenceFor(score, lowConfidence);
+
+    // Document class (GPTZero taxonomy): human / mixed / ai, plus the
+    // "AI-Polished" sub-class — human-written prose later cleaned up by AI. We
+    // flag that when the OVERALL score is only mixed/moderate yet the text
+    // carries clear human markers (contractions, first-person, specificity)
+    // alongside AI-flat structure: the signature of human content, AI editing.
+    const firstPerson = /\b(i|i'm|i've|i'd|my|me|we|our|us)\b/.test(lowT);
+    const exclaims = (t.match(/!/g) || []).length;
+    const quotes = (t.match(/["“"][^"”"]{6,}["”"]/g) || []).length;
+    const humanMarkers = (contractionRate >= 0.02 ? 1 : 0) +
+                         (firstPerson ? 1 : 0) + (exclaims >= 1 ? 1 : 0) +
+                         (sigSpecific >= 0.4 ? 1 : 0);
+    const aiStructure = sigBurst >= 0.45 || (hasPplx && sigPplxBurst >= 0.45) ||
+                        sigCliche >= 0.25 || sigFiller >= 0.3;
+    let docClass;
+    if (score >= 70) docClass = "ai";
+    else if (score >= 45) docClass = "mixed";
+    else docClass = "human";
+    let aiPolished = false;
+    if (score >= 35 && score < 70 && humanMarkers >= 2 && aiStructure) {
+      aiPolished = true;
+    }
+
+    // Plain-English explanation tags (why it reads AI / human).
+    const avgLen = sents.length ? wordCount / sents.length : 0;
+    const tags = explanationTags({
+      sigBurst, sigPplxBurst, hasPplx, sigCliche, sigFiller, sigEnum,
+      sigNoContractions, sigPunct, sigOpenerStyle, sigAbstraction,
+      sigCasualAI, casualAI, sigSpecific, contractionRate, avgLen,
+      exclaims, quotes, firstPerson,
+    });
+
+    // ZeroGPT-style metrics panel.
+    const metrics = textMetrics(text, ws, sents);
+
+    return {
+      score, label, verdict, confidence, docClass, aiPolished,
+      signals, tags, metrics, wordCount, perSentence, lowConfidence,
+    };
   }
 
   global.Detector = { detect };
