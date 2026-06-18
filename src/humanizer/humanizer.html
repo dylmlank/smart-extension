@@ -89,6 +89,9 @@
     <p class="disclaimer">Estimates only. No tool can guarantee bypassing every AI detector — detectors change constantly. Use this to write more clearly, not to deceive.</p>
   </main>
 
+  <!-- Seed the OpenRouter key into chrome.storage (gitignored, shared with
+       options.html) so the deep rewrite works even if options was never opened. -->
+  <script src="../ui/local-key.js"></script>
   <script src="learnings.js"></script>
   <script src="humanize.js"></script>
   <script src="bigrams.js"></script>
