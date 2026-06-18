@@ -8,7 +8,7 @@
      text, score, rounds, history, hitTarget
    }>
    opts: {
-     mode, target = 30, maxRounds = 5,
+     mode, target = 10, maxRounds = 6,
      llm,            // async (systemPrompt, userText) => string   (optional)
      onRound,        // (info) => void   progress callback (optional)
    }
@@ -64,8 +64,8 @@
   async function loopHumanize(text, opts) {
     opts = opts || {};
     const mode = opts.mode || "balanced";
-    const target = opts.target ?? 30;
-    const maxRounds = opts.maxRounds ?? 5;
+    const target = opts.target ?? 10;
+    const maxRounds = opts.maxRounds ?? 6;
     const llm = opts.llm;
     const regenerate = opts.regenerate; // (text, mode, feedback, round) => string
     const onRound = opts.onRound || (() => {});
@@ -86,7 +86,8 @@
     let best = current;
     let bestScore = scoreOf(current);
     history.push({ round: 0, via: "local", score: bestScore });
-    onRound({ round: 0, via: "local", score: bestScore, text: current });
+    onRound({ round: 0, via: "local", score: bestScore, text: current,
+              bestScore, bestText: best });
 
     if (bestScore <= target) {
       return { text: best, score: bestScore, rounds: 1, history, hitTarget: true };
@@ -130,12 +131,19 @@
 
       if (!candidate) candidate = current;
       const score = scoreOf(candidate);
-      history.push({ round: r, via, score });
-      onRound({ round: r, via, score, text: candidate });
-
       if (score < bestScore) { best = candidate; bestScore = score; }
       current = candidate;
+      history.push({ round: r, via, score });
+      onRound({ round: r, via, score, text: candidate,
+                bestScore, bestText: best });
 
+      // Best-of-N: with hot sampling, scores for the SAME input swing widely
+      // round to round (e.g. 12% / 60% / 4%), so we keep re-rolling and hold onto
+      // the single best candidate rather than accepting the first "ok" one. We
+      // stop early once a candidate reaches the target. Target defaults to 10%
+      // ("Likely human-written"), which is the realistic human range — genuine
+      // human writing scores a median of ~11% on this detector, so chasing a much
+      // lower number just burns API rounds below the proxy's own noise floor.
       if (bestScore <= target) {
         return { text: best, score: bestScore, rounds: r + 1, history, hitTarget: true };
       }

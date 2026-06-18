@@ -144,7 +144,7 @@ const PROMPTS = {
 // higher-perplexity continuations, which is what detectors measure). Summarize
 // stays cool so the notes are accurate.
 const SAMPLING = {
-  human: { temperature: 1.15, top_p: 0.98, frequency_penalty: 0.5, presence_penalty: 0.4 },
+  human: { temperature: 1.05, top_p: 0.97, frequency_penalty: 0.3, presence_penalty: 0.2 },
   precise: { temperature: 0.3, top_p: 0.9 },
 };
 // Wrap the extension's chat() into the (systemPrompt, userText) shape the loop
@@ -177,10 +177,13 @@ const REGEN_RULES =
   "1) Vary sentence length HARD: include at least one very short sentence (under " +
   "6 words) and at least one long one (over 30 words); never put two similar " +
   "lengths in a row. " +
-  "2) Choose specific, slightly unexpected words over the obvious safe one — but " +
-  "stay natural and correct. " +
-  "3) Use contractions. Start a sentence with 'And', 'But', or 'So' once. Add one " +
-  "short opinionated aside. " +
+  "2) Use plain, everyday words. Prefer short common words over long formal or " +
+  "Latinate ones (say 'use' not 'utilize', 'grow' not 'scale'). Pick the " +
+  "specific, slightly unexpected word over the safe generic one, but keep it " +
+  "simple and correct. " +
+  "3) Use contractions throughout — at least three (it's, don't, you'll, they're, " +
+  "that's). This is required. Start a sentence with 'And', 'But', or 'So' once. " +
+  "Add one short opinionated aside. " +
   "4) Reorder the points freely if it flows better. " +
   "NEVER use these words: delve, underscore, showcase, intricate, meticulous, " +
   "commendable, leverage, foster, seamless, robust, crucial, comprehensive, " +
@@ -202,7 +205,7 @@ async function llmRegenerate(text, mode, feedback, round) {
   if (feedback) sys += ` Fix these tells the detector found: ${String(feedback).slice(0, 200)}.`;
   // Hot rewrite, hotter each round (within a quality-safe ceiling).
   const draft = await llmRewrite(sys, notes || text,
-    { ...SAMPLING.human, temperature: Math.min(1.15 + round * 0.08, 1.35) });
+    { ...SAMPLING.human, temperature: Math.min(1.05 + round * 0.05, 1.2) });
   // finish(): light cleanup only, so we don't re-flatten the new rhythm.
   return window.Humanizer.finish((draft || "").trim(), mode);
 }
@@ -233,12 +236,13 @@ btn.onclick = async () => {
       try {
         const res = await window.loopHumanize(text, {
           mode,
-          target: 30,
-          maxRounds: 5,
+          target: 10,
+          maxRounds: 6,
           regenerate: regenerateForLoop,
           onRound: (info) => {
-            if (info.text) setOutput(info.text, text);
-            setStatus(`Round ${info.round + 1} · ${info.via} · ${info.score}% AI`);
+            // Show the best-so-far, not the latest (which may be a bad roll).
+            if (info.bestText) setOutput(info.bestText, text);
+            setStatus(`Round ${info.round + 1} · best ${info.bestScore}% AI`);
           },
         });
         result = res.text;
