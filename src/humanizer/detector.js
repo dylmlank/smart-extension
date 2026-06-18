@@ -150,6 +150,32 @@
     return uniq / ws.length;
   }
 
+  // ---- Lexical complexity ----
+  // A robust, domain-general AI tell: LLMs reach for longer, more Latinate words
+  // far more than people do in most registers (it's the "sophisticated clarity"
+  // GPTZero names). Measured across both the tuning set and a held-out set of
+  // fresh AI vs varied human writing, long-word and polysyllabic ratios were the
+  // single best-GENERALIZING content signal (sep ~0.45-0.53 on held-out data,
+  // where buzzword counting failed). We blend the share of words >=7 letters with
+  // the share of >=3-syllable words. Returns 0..1, higher = more AI-like.
+  function syllables(w) {
+    return (w.match(/[aeiouy]+/g) || []).length || 1;
+  }
+  function lexicalComplexity(ws) {
+    if (ws.length < 10) return 0;
+    let long = 0, poly = 0;
+    for (const w of ws) {
+      if (w.length >= 7) long++;
+      if (syllables(w) >= 3) poly++;
+    }
+    const longRatio = long / ws.length;
+    const polyRatio = poly / ws.length;
+    // Human prose: longRatio ~0.18-0.25, polyRatio ~0.12-0.18. AI runs higher.
+    const longSig = clamp((longRatio - 0.20) / 0.18, 0, 1);
+    const polySig = clamp((polyRatio - 0.13) / 0.17, 0, 1);
+    return clamp(longSig * 0.5 + polySig * 0.5, 0, 1);
+  }
+
   function phraseHits(text, list) {
     const lower = " " + text.toLowerCase() + " ";
     let count = 0;
@@ -472,11 +498,12 @@
     const ai = [], human = [];
     const { sigBurst, sigPplxBurst, hasPplx, sigCliche, sigFiller, sigEnum,
             sigNoContractions, sigPunct, sigOpenerStyle, sigAbstraction,
-            sigCasualAI, casualAI, sigSpecific, contractionRate, avgLen,
-            exclaims, quotes, firstPerson } = ctx;
+            sigCasualAI, casualAI, sigSpecific, sigLexical, contractionRate,
+            avgLen, exclaims, quotes, firstPerson } = ctx;
     // AI-leaning reasons
     if (sigBurst >= 0.5) ai.push({ tag: "Monotonous rhythm", why: "Sentences are similar in length — little variation." });
     if (hasPplx && sigPplxBurst >= 0.45) ai.push({ tag: "Flat predictability", why: "Each sentence is about as predictable as the next." });
+    if (sigLexical >= 0.5) ai.push({ tag: "Sophisticated vocabulary", why: "Unusually high share of long, formal, Latinate words." });
     if (sigCliche >= 0.3) ai.push({ tag: "Generic phrasing", why: "Leans on buzzwords and stock phrases AI overuses." });
     if (sigFiller >= 0.4) ai.push({ tag: "Vague filler", why: "Fluent but contentless hedging ('can help', 'a wide range of')." });
     if (sigEnum >= 0.4) ai.push({ tag: "Listicle scaffolding", why: "Explicit 'First… Second… Finally…' or step-by-step framing." });
@@ -628,6 +655,11 @@
     // entities/facts. Correctly signed (high on AI advice, ~0 on human facts).
     const sigAbstraction = adviceAbstraction(t, wordCount);
 
+    // Lexical complexity (long/polysyllabic word share). The best-generalizing
+    // CONTENT signal on held-out data — catches clean, factual AI prose that has
+    // no buzzwords but still reads "sophisticated/Latinate."
+    const sigLexical = lexicalComplexity(ws);
+
     // Weights are evidence-tuned against tests/labeled.json by measuring each
     // signal's AI-vs-human separation. The two STRUCTURAL signals that generalize
     // to modern, buzzword-free AI — sentence-rhythm burstiness and GPTZero-style
@@ -636,15 +668,16 @@
     // reason clean modern AI scored as human. The cliché signal stays strong so
     // obvious AI is still caught hard, but it no longer dominates the score.
     const weights = [
-      [sigBurst, 0.20, "Sentence rhythm", burst > 0.5 ? "varied (human-like)" : "uniform (AI-like)"],
-      [sigCliche, 0.15, "AI cliché / buzzword density", cliche.toFixed(1) + " / 100 words"],
-      [sigPplxBurst, 0.12, "Perplexity burstiness", sigPplxBurst > 0.4 ? "flat/uniform (AI-like)" : "varied (human-like)"],
-      [sigFiller, 0.10, "Filler constructions", sigFiller > 0.3 ? "vague hedges (AI-like)" : "low filler"],
-      [sigEnum, 0.09, "Enumeration / tutorial voice", sigEnum > 0.3 ? "lists/steps (AI-like)" : "low"],
-      [sigNoContractions, 0.06, "Contraction use", contractions + " found"],
-      [sigCasualAI, 0.06, "Casual-AI phrases", casualAI + " (\"let's be real\"…)"],
-      [sigOpenerStyle, 0.05, "Participial / adverb openers", sigOpenerStyle > 0.3 ? "\"Leveraging X,…\" (AI-like)" : "varied"],
-      [sigAbstraction, 0.05, "Generic-advice abstraction", sigAbstraction > 0.3 ? "abstract self-help (AI-like)" : "concrete"],
+      [sigBurst, 0.18, "Sentence rhythm", burst > 0.5 ? "varied (human-like)" : "uniform (AI-like)"],
+      [sigPplxBurst, 0.14, "Perplexity burstiness", sigPplxBurst > 0.4 ? "flat/uniform (AI-like)" : "varied (human-like)"],
+      [sigCliche, 0.13, "AI cliché / buzzword density", cliche.toFixed(1) + " / 100 words"],
+      [sigLexical, 0.11, "Lexical complexity", sigLexical > 0.4 ? "long/formal words (AI-like)" : "plain words (human-like)"],
+      [sigFiller, 0.09, "Filler constructions", sigFiller > 0.3 ? "vague hedges (AI-like)" : "low filler"],
+      [sigEnum, 0.08, "Enumeration / tutorial voice", sigEnum > 0.3 ? "lists/steps (AI-like)" : "low"],
+      [sigNoContractions, 0.05, "Contraction use", contractions + " found"],
+      [sigCasualAI, 0.05, "Casual-AI phrases", casualAI + " (\"let's be real\"…)"],
+      [sigOpenerStyle, 0.04, "Participial / adverb openers", sigOpenerStyle > 0.3 ? "\"Leveraging X,…\" (AI-like)" : "varied"],
+      [sigAbstraction, 0.04, "Generic-advice abstraction", sigAbstraction > 0.3 ? "abstract self-help (AI-like)" : "concrete"],
       [sigCommaCadence, 0.03, "Comma cadence", sigCommaCadence > 0.4 ? "uniform (AI-like)" : "clustered (human-like)"],
       [sigRepeat, 0.03, "Repeated phrasing", sigRepeat > 0.3 ? "reuses phrases (AI-like)" : "low repetition"],
       [sigHedge, 0.02, "Hedging / filler", hedge.toFixed(1) + " / 100 words"],
@@ -758,6 +791,7 @@
       (sigBurst >= 0.55 ? 1 : 0) +               // clearly uniform sentence length
       (hasPplx && sigPplxBurst >= 0.5 ? 1 : 0) + // clearly flat per-sentence perplexity
       (sigNoContractions >= 0.9 ? 1 : 0) +       // formal: essentially no contractions
+      (sigLexical >= 0.6 ? 1 : 0) +              // clearly long/formal/Latinate vocabulary
       (sigPunct >= 0.35 ? 1 : 0) +               // formal punctuation
       (sigCommaCadence >= 0.45 ? 1 : 0);         // uniform comma cadence
     // Concrete human writing (dates, proper nouns, quotes, numbers) is the
@@ -766,13 +800,15 @@
     if (sigSpecific >= 0.3) structural -= 1;
     if (sigSpecific >= 0.55) structural -= 2;
     // Only floor when the text is flat on MULTIPLE structural axes, has NO casual-
-    // human markers, and isn't concrete/specific. This is deliberately strict:
-    // statistical structure alone has a hard false-positive floor (the same trap
-    // that makes ESL/factual human writing read as AI in every detector), so we
-    // require a strong, clean structural fingerprint before flooring.
+    // human markers, and isn't concrete/specific. With 6 axes available now
+    // (lexical complexity added), the bar is raised to >=4 / >=5 so the same
+    // STRENGTH of evidence is required as before — a single extra axis doesn't
+    // make the floor fire more easily. Statistical structure alone has a hard
+    // false-positive floor (the trap that makes factual human writing read as AI
+    // in every detector), so this stays deliberately strict.
     if (!casualHuman && sigSpecific < 0.3) {
-      if (structural >= 4) score = Math.max(score, 64);
-      else if (structural >= 3) score = Math.max(score, 56);
+      if (structural >= 5) score = Math.max(score, 64);
+      else if (structural >= 4) score = Math.max(score, 56);
     }
 
     // Generic-advice abstraction: smooth, buzzword-free AI advice the structural
@@ -875,7 +911,7 @@
     const tags = explanationTags({
       sigBurst, sigPplxBurst, hasPplx, sigCliche, sigFiller, sigEnum,
       sigNoContractions, sigPunct, sigOpenerStyle, sigAbstraction,
-      sigCasualAI, casualAI, sigSpecific, contractionRate, avgLen,
+      sigCasualAI, casualAI, sigSpecific, sigLexical, contractionRate, avgLen,
       exclaims, quotes, firstPerson,
     });
 
