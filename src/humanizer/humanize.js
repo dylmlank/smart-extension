@@ -779,6 +779,28 @@
     return tidy(t);
   }
 
+  // Finishing pass for LLM-regenerated text. Unlike humanize(), this does NOT
+  // run the rhythm passes (varyLength / mergeShort / injectBurstiness) — those
+  // are for flat AI input, and re-running them on an LLM draft that's ALREADY
+  // bursty just flattens it back toward a uniform middle (the exact thing we're
+  // trying to avoid). It only does safe word-level cleanup: kill any buzzwords,
+  // antithesis templates, formulaic openers, and dashes the model slipped in,
+  // add light contractions, and tidy spacing. The LLM's sentence structure and
+  // length variation are preserved.
+  function finish(text, mode) {
+    if (!text || !text.trim()) return "";
+    mode = mode || "balanced";
+    let t = clean(text);
+    t = applyPhrases(t);     // buzzword -> plain swaps + learned replacements
+    t = breakAntithesis(t);  // kill "not just X, but Y"
+    t = dropFormulaic(t);    // strip "In conclusion", "First and foremost"
+    t = tightenFiller(t);    // cut vague modal hedges
+    t = contract(t);         // light contractions (human tell)
+    t = informalizePunct(t); // soften serial commas / semicolons / colons
+    t = removeHyphens(t);    // no hyphens or dashes
+    return tidy(t);
+  }
+
   const SAMPLE =
     "In today's world, it is important to note that artificial intelligence " +
     "plays a crucial role in numerous industries. Moreover, organizations " +
@@ -788,5 +810,5 @@
     "of digital transformation, and they cannot ignore the plethora of tools " +
     "available to them, which is a testament to how rapidly the field evolves.";
 
-  global.Humanizer = { humanize, SAMPLE };
+  global.Humanizer = { humanize, finish, SAMPLE };
 })(typeof window !== "undefined" ? window : globalThis);

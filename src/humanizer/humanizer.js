@@ -152,25 +152,42 @@ async function llmRewrite(systemPrompt, userText) {
 // the anti-detection guidelines, then run the local humanizer as a finishing
 // pass. Breaks the AI sentence skeleton entirely. `feedback`/`round` let the
 // loop target surviving tells and escalate.
+// Summarize step: reduce to bare styleless note fragments so NONE of the
+// original AI phrasing or sentence structure survives into the rewrite.
+const SUMMARIZE_PROMPT =
+  "Reduce the text to its bare facts as a flat list of short note fragments. " +
+  "Each note is 2 to 7 words, telegraphic style, no full sentences, no " +
+  "transitions, no opinions. Capture every distinct fact, claim, name, number, " +
+  "and step. Drop all original phrasing and structure. Output ONLY the notes, " +
+  "one per line, each starting with '- '.";
 const REGEN_RULES =
-  " Write like a real person, not an AI. Vary sentence length sharply (mix very " +
-  "short and longer sentences). Use contractions. Be concrete and direct. Do NOT " +
+  " You are given NOTES, not prose — build the writing yourself. MOST IMPORTANT: " +
+  "vary sentence length dramatically. Put a 3 to 6 word sentence next to a long " +
+  "one. Never let several sentences in a row have similar length. Use specific, " +
+  "concrete, sometimes unexpected words, not safe generic ones. Use contractions. " +
+  "Start every sentence differently. Reorder points if it reads better. Do NOT " +
   "use hyphens/dashes, buzzwords (leverage/delve/foster/seamless/robust/crucial/" +
   "realm/landscape), phrases like 'in today's world' / 'it is important to note' / " +
   "'plays a role' / 'not just X but Y', or 'First,/Second,/Finally,' scaffolding. " +
-  "No formulaic intro or conclusion. Output only the final text.";
+  "No formulaic intro or conclusion. Keep about the same length. Output only the final text.";
+// Latest extracted notes, surfaced to the UI.
+let lastNotes = "";
 async function llmRegenerate(text, mode, feedback, round) {
   const tone = mode === "simple" ? "in plain, simple language"
     : mode === "casual" ? "in a casual, conversational voice" : "naturally";
-  const notes = await llmRewrite(
-    "List the key points of this text as terse bullet notes — facts only, no style. Output only bullets.",
-    text
-  );
-  let sys = `Using these notes, write a human paragraph ${tone}.` + REGEN_RULES;
-  if (round > 0) sys += " The previous attempt STILL read like AI. Be far more aggressive with rhythm and plain words.";
+  const notes = await llmRewrite(SUMMARIZE_PROMPT, text);
+  lastNotes = notes || "";
+  let sys = `Write a human paragraph ${tone} from these notes.` + REGEN_RULES;
+  if (round > 0) sys += " The previous attempt STILL read like AI. Smash the rhythm harder and use plainer, more specific words.";
   if (feedback) sys += ` Fix these tells the detector found: ${String(feedback).slice(0, 200)}.`;
   const draft = await llmRewrite(sys, notes || text);
-  return window.Humanizer.humanize((draft || "").trim(), mode);
+  // finish(): light cleanup only, so we don't re-flatten the new rhythm.
+  return window.Humanizer.finish((draft || "").trim(), mode);
+}
+
+// Loop-compatible regenerate: returns final text (string); notes are stashed.
+async function regenerateForLoop(text, mode, feedback, round) {
+  return await llmRegenerate(text, mode, feedback, round);
 }
 
 const btn = $("humanizeBtn");
@@ -178,69 +195,71 @@ btn.onclick = async () => {
   const text = input.value.trim();
   if (!text) { setStatus("Paste some text first", 2000); return; }
 
-  const useLLM = $("useLLM").checked;
-  const loop = $("untilUndetectable").checked;
-
+  // Default = deep summarize -> notes -> regenerate. "Fast local rewrite"
+  // forces the offline rule-only pass (no LLM call).
+  const fastLocal = $("fastLocal") && $("fastLocal").checked;
   btn.disabled = true;
+  lastNotes = "";
   let result;
 
   try {
-    if (loop) {
-      // Iterate until the detector reads human (or max rounds). When "Rewrite
-      // from scratch" is on, each round rebuilds from meaning (regenerate-loop).
-      const regen = $("regenerate") && $("regenerate").checked && useLLM;
-      const res = await window.loopHumanize(text, {
-        mode,
-        target: 30,
-        maxRounds: useLLM ? 5 : 3,
-        regenerate: regen ? llmRegenerate : null,
-        llm: useLLM && !regen ? llmRewrite : null,
-        onRound: (info) => {
-          setOutput(info.text, text);
-          setStatus(`Round ${info.round + 1} · ${info.via} · score ${info.score}`);
-        },
-      });
-      result = res.text;
-      setStatus(
-        res.hitTarget
-          ? `Undetectable ✓ (${res.score}% AI, ${res.rounds} rounds)`
-          : `Best effort: ${res.score}% AI after ${res.rounds} rounds`,
-        4000
-      );
-    } else {
+    if (fastLocal) {
       result = window.Humanizer.humanize(text, mode);
-      if (useLLM) {
-        const regen = $("regenerate") && $("regenerate").checked;
-        setStatus(regen ? "Summarizing & rewriting…" : "Deep rewriting…");
-        try {
-          if (regen) {
-            result = await llmRegenerate(text, mode);
-          } else {
-            const out = await llmRewrite(PROMPTS[mode], text);
-            if (out && out.trim()) result = window.Humanizer.humanize(out.trim(), mode);
-          }
-        } catch { setStatus("AI unavailable — used local", 2500); }
+      setStatus("Done (fast local rewrite)", 1500);
+    } else {
+      setStatus("Summarizing to notes & rewriting…");
+      try {
+        const res = await window.loopHumanize(text, {
+          mode,
+          target: 30,
+          maxRounds: 5,
+          regenerate: regenerateForLoop,
+          onRound: (info) => {
+            if (info.text) setOutput(info.text, text);
+            setStatus(`Round ${info.round + 1} · ${info.via} · ${info.score}% AI`);
+          },
+        });
+        result = res.text;
+        setStatus(
+          res.hitTarget
+            ? `Undetectable ✓ (${res.score}% AI, ${res.rounds} rounds)`
+            : `Best effort: ${res.score}% AI after ${res.rounds} rounds`,
+          4000
+        );
+      } catch (e) {
+        result = window.Humanizer.humanize(text, mode);
+        setStatus("⚠ AI model unreachable (start Ollama or set a key) — used fast local rewrite.", 5000);
       }
-      setStatus("Done", 1500);
     }
   } catch (e) {
     if (!result) result = window.Humanizer.humanize(text, mode);
-    setStatus("Error — used local rewrite", 2500);
+    setStatus("⚠ Rewrite error — used fast local rewrite.", 4000);
   } finally {
     btn.disabled = false;
   }
 
   setOutput(result, text);
   showScoreStrip(text, result);
+  renderNotes();
   detectTarget = "output";
   syncDetectTabs();
   runDetect();
 
-  // Retrospective: reflect on this run and learn from it (non-blocking). Uses
-  // the extension's LLM (Ollama/OpenRouter) when "Deep rewrite" is on, else a
-  // fast offline rule-based reflection.
-  runRetro(text, result, useLLM);
+  // Retrospective: reflect (LLM reflection unless fast-local was forced).
+  runRetro(text, result, !fastLocal);
 };
+
+// Show the extracted notes the rewrite was built from.
+function renderNotes() {
+  const card = $("notesCard"), body = $("notesBody");
+  if (!card || !body) return;
+  if (!lastNotes) { card.hidden = true; return; }
+  const items = lastNotes.split(/\n+/).map((l) => l.replace(/^[-*]\s*/, "").trim()).filter(Boolean);
+  if (!items.length) { card.hidden = true; return; }
+  const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  body.innerHTML = `<ul class="notes-list">${items.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>`;
+  card.hidden = false;
+}
 
 // Reflect on a run and persist learnings that improve future detect/humanize.
 async function runRetro(inp, outp, useLLM) {

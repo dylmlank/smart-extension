@@ -20,17 +20,9 @@
         <button class="seg-btn" data-mode="simple">Simple</button>
         <button class="seg-btn" data-mode="casual">Casual</button>
       </div>
-      <label class="toggle">
-        <input type="checkbox" id="useLLM" checked />
-        <span>Deep rewrite (AI)</span>
-      </label>
-      <label class="toggle" title="Summarize, then rewrite from scratch following the anti-detection guidelines. Breaks AI sentence structure entirely. Needs Deep rewrite.">
-        <input type="checkbox" id="regenerate" />
-        <span>Rewrite from scratch</span>
-      </label>
-      <label class="toggle">
-        <input type="checkbox" id="untilUndetectable" checked />
-        <span>Loop until undetectable</span>
+      <label class="toggle" title="Force the offline rule-based rewrite (no AI call). The default deep rewrite summarizes your text to notes, then rewrites from scratch to strip AI structure — and needs a model (Ollama or a key).">
+        <input type="checkbox" id="fastLocal" />
+        <span>Fast local rewrite</span>
       </label>
     </div>
 
@@ -73,6 +65,13 @@
     </div>
 
     <div class="action-row"><button id="humanizeBtn" class="primary-btn">Humanize</button></div>
+
+    <section id="notesCard" class="detector" hidden>
+      <div class="detector-head"><span>📝 Notes extracted from your text</span>
+        <span class="meta" style="margin-left:auto">the rewrite is built from these, not the original</span>
+      </div>
+      <div id="notesBody" class="detector-body"></div>
+    </section>
 
     <section class="detector">
       <div class="detector-head"><span>AI Detector</span>
