@@ -18,13 +18,26 @@ async function getKey() {
 }
 
 // ---- Ollama ----
-async function callOllama(messages, signal) {
+async function callOllama(messages, signal, opts) {
   let res;
+  // Map our sampling opts onto Ollama's "options" block. The humanizer passes a
+  // hot preset (high temperature + repeat penalty) to push token choices toward
+  // higher-perplexity, less-detectable output.
+  const options = {};
+  if (opts) {
+    if (opts.temperature != null) options.temperature = opts.temperature;
+    if (opts.top_p != null) options.top_p = opts.top_p;
+    // Ollama uses repeat_penalty; approximate from frequency_penalty.
+    if (opts.frequency_penalty != null) options.repeat_penalty = 1 + opts.frequency_penalty;
+  }
   try {
     res = await fetch(OLLAMA_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: OLLAMA_MODEL, messages, stream: false }),
+      body: JSON.stringify({
+        model: OLLAMA_MODEL, messages, stream: false,
+        ...(Object.keys(options).length ? { options } : {}),
+      }),
       signal
     });
   } catch (e) {
@@ -69,7 +82,7 @@ export async function ollamaHealth() {
 }
 
 // ---- OpenRouter (with model fallback on 429) ----
-async function callOpenRouter(messages, signal) {
+async function callOpenRouter(messages, signal, opts) {
   const key = await getKey();
   if (!key) throw new Error("no openrouter key");
   let lastErr;
@@ -83,7 +96,7 @@ async function callOpenRouter(messages, signal) {
           "HTTP-Referer": "chrome-extension://smart-assistant",
           "X-Title": "Smart Personal Assistant"
         },
-        body: JSON.stringify({ model, messages }),
+        body: JSON.stringify({ model, messages, ...(opts || {}) }),
         signal
       });
       if (res.status === 429) { lastErr = new Error("429"); continue; }
@@ -105,7 +118,9 @@ async function callOpenRouter(messages, signal) {
 // aborted. OpenRouter only joins the race when a key is configured — otherwise
 // Ollama runs alone and we surface its real error (e.g. CORS / not running)
 // instead of a misleading "all providers failed".
-export async function chat(messages) {
+// `opts` carries optional sampling params (temperature, top_p, frequency_penalty,
+// presence_penalty) used by the humanizer's hot rewrite preset.
+export async function chat(messages, opts) {
   const ac1 = new AbortController();
   const ac2 = new AbortController();
 
@@ -114,8 +129,8 @@ export async function chat(messages) {
 
   const hasKey = !!(await getKey());
 
-  const racers = [wrap(callOllama(messages, ac1.signal), ac1)];
-  if (hasKey) racers.push(wrap(callOpenRouter(messages, ac2.signal), ac2));
+  const racers = [wrap(callOllama(messages, ac1.signal, opts), ac1)];
+  if (hasKey) racers.push(wrap(callOpenRouter(messages, ac2.signal, opts), ac2));
 
   return new Promise((resolve, reject) => {
     let pending = racers.length;

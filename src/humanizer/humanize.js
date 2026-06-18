@@ -46,6 +46,28 @@
     [/\bdemonstrate\b/gi, "show"],
     [/\bencompasses\b/gi, "includes"],
     [/\bmultifaceted\b/gi, "complex"],
+    // Highest-signal 2024 AI-tell words (Kobak et al., PubMed excess-frequency).
+    // These spiked 700-1500% in AI-era text and are weighted heavily by scanners.
+    [/\bmeticulously\b/gi, "carefully"],
+    [/\bmeticulous\b/gi, "careful"],
+    [/\bcommendable\b/gi, "good"],
+    [/\bnoteworthy\b/gi, "notable"],
+    [/\bdelve(s)?\b/gi, "look$1"],
+    [/\bgarner(s|ed|ing)?\b/gi, "get$1"],
+    [/\bbolster(s|ed|ing)?\b/gi, "boost$1"],
+    [/\bexemplifies\b/gi, "shows"],
+    [/\bexemplify\b/gi, "show"],
+    [/\bsurpass(es|ed|ing)?\b/gi, "beat$1"],
+    // Copula-avoidance: AI replaces plain "is/has" with inflated verbs. Put the
+    // plain verb back — a strong, easy-to-detect tell when removed.
+    [/\bserves as\b/gi, "is"],
+    [/\bacts as\b/gi, "is"],
+    [/\bfunctions as\b/gi, "is"],
+    [/\bstands as\b/gi, "is"],
+    [/\bremains a\b/gi, "is a"],
+    [/\bcontinues to be\b/gi, "is still"],
+    [/\brepresents a\b/gi, "is a"],
+    [/\bconstitutes\b/gi, "is"],
     // Casual-AI stock phrases — strip the conversational scaffolding.
     [/\blet'?s be (?:real|honest)\b,?\s*/gi, ""],
     [/\bhere'?s the (?:thing|deal)\b:?\s*/gi, ""],
@@ -227,9 +249,32 @@
     out = out.replace(/\b(?:this|that|these|the above)(?:\s+\w+){0,2}\s+(?:ensures?|guarantees?|provides?|delivers?)\s+[^.!?]*[.!?]/gi, "");
     // "you'll want/need/have to" tutorial hedge -> plain imperative.
     out = out.replace(/\byou'?ll (?:want|need|have) to\b/gi, "");
+    // Generic AI closers — whole-sentence stock endings that scream "AI essay."
+    // Drop the entire sentence they appear in.
+    const CLOSERS = [
+      /[^.!?]*\bthe future looks bright\b[^.!?]*[.!?]/gi,
+      /[^.!?]*\bonly time will tell\b[^.!?]*[.!?]/gi,
+      /[^.!?]*\bthe possibilities are endless\b[^.!?]*[.!?]/gi,
+      /[^.!?]*\bone thing is (?:for )?certain\b[^.!?]*[.!?]/gi,
+      /[^.!?]*\bwhen all is said and done\b[^.!?]*[.!?]/gi,
+      /[^.!?]*\bat the end of the day\b[^.!?]*[.!?]/gi,
+    ];
+    for (const re of CLOSERS) out = out.replace(re, "");
     // Re-capitalize sentence starts we may have exposed.
     out = out.replace(/(^|[.!?]\s+)([a-z])/g, (m, p, c) => p + c.toUpperCase());
     return out;
+  }
+
+  // Break the "rule of three" — AI's habit of listing exactly three parallel
+  // items ("fast, reliable, and affordable"). Humans cluster on two or four. We
+  // drop the middle item of an "X, Y, and Z" run to make it a pair, which kills
+  // the cadence. Only fires on adjacent single-word/short items so we don't
+  // mangle real lists with longer phrases.
+  function breakRuleOfThree(text) {
+    return text.replace(
+      /\b([\w'-]+),\s+([\w'-]+),\s+and\s+([\w'-]+)\b/gi,
+      (m, a, b, c) => `${a} and ${c}`
+    );
   }
 
   // De-enumerate: strip the explicit "First,/Second,/Next,/Finally,/Lastly,"
@@ -752,6 +797,7 @@
     let t = clean(text);
     t = applyPhrases(t);
     t = breakAntithesis(t);     // kill "not just X, but Y" templates
+    t = breakRuleOfThree(t);    // turn "X, Y, and Z" into "X and Z"
     t = dropFormulaic(t);       // strip "In conclusion", "First and foremost"…
     t = tightenFiller(t);       // cut vague modal hedges / contentless filler
     t = rotateSynonyms(t, rnd); // vary common-word swaps run to run
@@ -791,13 +837,14 @@
     if (!text || !text.trim()) return "";
     mode = mode || "balanced";
     let t = clean(text);
-    t = applyPhrases(t);     // buzzword -> plain swaps + learned replacements
-    t = breakAntithesis(t);  // kill "not just X, but Y"
-    t = dropFormulaic(t);    // strip "In conclusion", "First and foremost"
-    t = tightenFiller(t);    // cut vague modal hedges
-    t = contract(t);         // light contractions (human tell)
-    t = informalizePunct(t); // soften serial commas / semicolons / colons
-    t = removeHyphens(t);    // no hyphens or dashes
+    t = applyPhrases(t);       // buzzword -> plain swaps + learned replacements
+    t = breakAntithesis(t);    // kill "not just X, but Y"
+    t = breakRuleOfThree(t);   // turn "X, Y, and Z" into "X and Z"
+    t = dropFormulaic(t);      // strip "In conclusion" + generic closers
+    t = tightenFiller(t);      // cut vague modal hedges
+    t = contract(t);           // light contractions (human tell)
+    t = informalizePunct(t);   // soften serial commas / semicolons / colons
+    t = removeHyphens(t);      // no hyphens or dashes
     return tidy(t);
   }
 

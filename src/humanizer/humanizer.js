@@ -139,12 +139,21 @@ const PROMPTS = {
   casual: "Rewrite in a casual, conversational human tone with contractions." + RULES,
 };
 
-// Wrap the extension's chat() into the (systemPrompt, userText) shape the loop wants.
-async function llmRewrite(systemPrompt, userText) {
+// Sampling presets. A hot temperature + repetition penalties is the single
+// biggest lever for evading statistical detectors (it pushes word choices toward
+// higher-perplexity continuations, which is what detectors measure). Summarize
+// stays cool so the notes are accurate.
+const SAMPLING = {
+  human: { temperature: 1.15, top_p: 0.98, frequency_penalty: 0.5, presence_penalty: 0.4 },
+  precise: { temperature: 0.3, top_p: 0.9 },
+};
+// Wrap the extension's chat() into the (systemPrompt, userText) shape the loop
+// wants. `sampling` selects the preset (defaults to the hot human preset).
+async function llmRewrite(systemPrompt, userText, sampling) {
   const { text } = await chat([
     { role: "system", content: systemPrompt },
     { role: "user", content: userText },
-  ]);
+  ], sampling || SAMPLING.human);
   return text || "";
 }
 
@@ -160,27 +169,40 @@ const SUMMARIZE_PROMPT =
   "transitions, no opinions. Capture every distinct fact, claim, name, number, " +
   "and step. Drop all original phrasing and structure. Output ONLY the notes, " +
   "one per line, each starting with '- '.";
+// Rebuild rules. Encodes what actually moves real detectors: hard sentence-
+// length variance (burstiness), lower-probability word choice (perplexity), and
+// removal of the structural + lexical fingerprints detectors and humans flag.
 const REGEN_RULES =
-  " You are given NOTES, not prose — build the writing yourself. MOST IMPORTANT: " +
-  "vary sentence length dramatically. Put a 3 to 6 word sentence next to a long " +
-  "one. Never let several sentences in a row have similar length. Use specific, " +
-  "concrete, sometimes unexpected words, not safe generic ones. Use contractions. " +
-  "Start every sentence differently. Reorder points if it reads better. Do NOT " +
-  "use hyphens/dashes, buzzwords (leverage/delve/foster/seamless/robust/crucial/" +
-  "realm/landscape), phrases like 'in today's world' / 'it is important to note' / " +
-  "'plays a role' / 'not just X but Y', or 'First,/Second,/Finally,' scaffolding. " +
-  "No formulaic intro or conclusion. Keep about the same length. Output only the final text.";
+  " You are given NOTES, not prose — build the writing yourself. " +
+  "1) Vary sentence length HARD: include at least one very short sentence (under " +
+  "6 words) and at least one long one (over 30 words); never put two similar " +
+  "lengths in a row. " +
+  "2) Choose specific, slightly unexpected words over the obvious safe one — but " +
+  "stay natural and correct. " +
+  "3) Use contractions. Start a sentence with 'And', 'But', or 'So' once. Add one " +
+  "short opinionated aside. " +
+  "4) Reorder the points freely if it flows better. " +
+  "NEVER use these words: delve, underscore, showcase, intricate, meticulous, " +
+  "commendable, leverage, foster, seamless, robust, crucial, comprehensive, " +
+  "tapestry, realm, testament, multifaceted, navigate, boast, vibrant. " +
+  "NO em-dashes or hyphens. NO three-item lists (use two or four). NO 'not only X " +
+  "but also Y' or 'it's not just X, it's Y'. NO 'serves as / acts as' (just say " +
+  "'is'). NO 'Moreover/Furthermore/Additionally'. NO formulaic intro or closer " +
+  "like 'in conclusion' or 'the future looks bright'. " +
+  "Keep about the same length and keep all the facts. Output only the final text.";
 // Latest extracted notes, surfaced to the UI.
 let lastNotes = "";
 async function llmRegenerate(text, mode, feedback, round) {
   const tone = mode === "simple" ? "in plain, simple language"
     : mode === "casual" ? "in a casual, conversational voice" : "naturally";
-  const notes = await llmRewrite(SUMMARIZE_PROMPT, text);
+  const notes = await llmRewrite(SUMMARIZE_PROMPT, text, SAMPLING.precise);
   lastNotes = notes || "";
   let sys = `Write a human paragraph ${tone} from these notes.` + REGEN_RULES;
-  if (round > 0) sys += " The previous attempt STILL read like AI. Smash the rhythm harder and use plainer, more specific words.";
+  if (round > 0) sys += " The previous attempt STILL read like AI. Smash the rhythm harder and use plainer, more specific, less predictable words.";
   if (feedback) sys += ` Fix these tells the detector found: ${String(feedback).slice(0, 200)}.`;
-  const draft = await llmRewrite(sys, notes || text);
+  // Hot rewrite, hotter each round (within a quality-safe ceiling).
+  const draft = await llmRewrite(sys, notes || text,
+    { ...SAMPLING.human, temperature: Math.min(1.15 + round * 0.08, 1.35) });
   // finish(): light cleanup only, so we don't re-flatten the new rhythm.
   return window.Humanizer.finish((draft || "").trim(), mode);
 }
