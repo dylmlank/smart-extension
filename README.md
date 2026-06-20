@@ -11,6 +11,9 @@ Orchestrator (agents.js)
   ├─ summarizer   — summarize / Q&A on the current page
   ├─ pageChat     — chat with the page/article + reading time & key takeaways
   ├─ writer       — fix grammar, change tone, humanize selected text
+  ├─ rewriter     — rewrite text to read human & evade AI detectors (hot preset)
+  ├─ canvas       — read a Canvas course (pages/modules/assignments/files):
+  │                 summarize, study guide, practice quiz, due dates, page summary, Q&A
   ├─ translator   — translate selection or page to any language
   ├─ organizer    — group, dedupe, close tabs
   ├─ researcher   — explain selection, build a research log
@@ -37,6 +40,25 @@ fed back into every agent's system prompt.
 2. Enable **Developer mode**
 3. Click **Load unpacked** → select this `smart-extension/` folder
 4. (Optional) Settings → paste an OpenRouter key for cloud fallback
+
+## Canvas integration
+
+Open any Canvas course page (`*.instructure.com`) and the popup shows a **🎓 Canvas**
+section with: **Summarize course**, **Study guide**, **Practice quiz**, **Due dates**,
+and **This page** (on a wiki page). The same actions are on the right-click
+**Canvas Helper** menu, with results shown inline on the page.
+
+It reads the course via the Canvas REST API using your existing login session
+(no token needed). It gathers pages, modules, assignments, and lists files
+(PowerPoints/PDFs by name + link — binary parsing is a planned follow-up).
+Gathered content is cached per course so chat follow-ups don't re-fetch.
+
+## Undetectable rewriting
+
+The **Undetectable** writing chip (and the `rewriter` agent) rewrite selected
+text to read as naturally human-written, run through the same Ollama/OpenRouter
+LLM layer with a high-temperature sampling preset. Ported from the standalone
+`rewriter` project's prompt.
 
 Runs fully local with Ollama (`llama3.2:latest`) if no key is set. Make sure
 Ollama allows the extension origin:

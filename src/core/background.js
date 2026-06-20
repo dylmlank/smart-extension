@@ -2,6 +2,7 @@
 import { orchestrate } from "../agents/agents.js";
 import { runRetrospective } from "./retrospective.js";
 import { listTools, deleteTool, createAndRun } from "../agents/toolfactory.js";
+import { parseCanvasUrl } from "../agents/canvas-api.js";
 
 // ---- Message handling from popup / content / options ----
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -97,6 +98,16 @@ const SELECTION_ACTIONS = [
   { id: "sa-translate-en", title: "Translate → English", task: "Translate to English", lang: "English" },
 ];
 
+// Canvas page actions (act on the whole course page, not a text selection).
+// Restricted to Canvas hosts via documentUrlPatterns so they only appear there.
+const CANVAS_PATTERNS = ["https://*.instructure.com/*", "https://*.canvas.com/*"];
+const CANVAS_ACTIONS = [
+  { id: "cv-summary",    title: "Summarize this course", task: "Summarize this Canvas course", mode: "summary" },
+  { id: "cv-study",      title: "Make a study guide",    task: "Make a study guide",           mode: "studyGuide" },
+  { id: "cv-due",        title: "Upcoming due dates",    task: "What's due?",                  mode: "due" },
+  { id: "cv-page",       title: "Summarize this page",   task: "Summarize this Canvas page",   mode: "page" },
+];
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
@@ -114,6 +125,18 @@ chrome.runtime.onInstalled.addListener(() => {
       id: HUMANIZE_MENU_ID, parentId: "sa-root",
       title: "Open in Humanizer + Detector", contexts: ["selection"],
     });
+
+    // Canvas page menu — only shows on Canvas hosts (page context, no selection).
+    chrome.contextMenus.create({
+      id: "cv-root", title: "Canvas Helper", contexts: ["page"],
+      documentUrlPatterns: CANVAS_PATTERNS,
+    });
+    for (const a of CANVAS_ACTIONS) {
+      chrome.contextMenus.create({
+        id: a.id, parentId: "cv-root", title: a.title, contexts: ["page"],
+        documentUrlPatterns: CANVAS_PATTERNS,
+      });
+    }
   });
 });
 
@@ -124,6 +147,34 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       await chrome.storage.local.set({ humanizePrefill: info.selectionText });
     }
     chrome.tabs.create({ url: chrome.runtime.getURL("src/humanizer/humanizer.html?prefill=1") });
+    return;
+  }
+
+  // Canvas page actions: parse the course from the tab URL, run the canvas agent.
+  const canvasAction = CANVAS_ACTIONS.find((a) => a.id === info.menuItemId);
+  if (canvasAction) {
+    if (!tab?.id) return;
+    const cv = parseCanvasUrl(tab.url || info.pageUrl || "");
+    if (!cv?.courseId) {
+      chrome.tabs.sendMessage(tab.id, {
+        type: "saResult", state: "done", title: canvasAction.title,
+        output: "Open a Canvas course page (URL like .../courses/12345/...).",
+      }).catch(() => {});
+      return;
+    }
+    chrome.tabs.sendMessage(tab.id, { type: "saResult", state: "loading", title: canvasAction.title }).catch(() => {});
+    try {
+      const res = await orchestrate(canvasAction.task, { canvas: cv, mode: canvasAction.mode }, []);
+      chrome.tabs.sendMessage(tab.id, {
+        type: "saResult", state: "done", title: canvasAction.title,
+        output: res.output || res.error || "(no response)",
+      }).catch(() => {});
+    } catch (e) {
+      chrome.tabs.sendMessage(tab.id, {
+        type: "saResult", state: "done", title: canvasAction.title,
+        output: "Error: " + (e.message || e),
+      }).catch(() => {});
+    }
     return;
   }
 

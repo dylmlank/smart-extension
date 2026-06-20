@@ -4,6 +4,10 @@
 import { chat } from "../core/llm.js";
 import { insightContext, logAction } from "../core/retrospective.js";
 import { createAndRun, listTools, runOps } from "./toolfactory.js";
+import {
+  parseCanvasUrl, gatherCourse, upcomingAssignments,
+  courseToPrompt, CanvasAPI, htmlToText,
+} from "./canvas-api.js";
 
 // ---- Tools the agents can use (browser side effects) ----
 const tools = {
@@ -27,8 +31,24 @@ const tools = {
     const groupId = await chrome.tabs.group({ tabIds });
     await chrome.tabGroups.update(groupId, { title });
     return groupId;
+  },
+  // Parse Canvas course/page info from the active tab's URL.
+  async activeCanvas() {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    return tab?.url ? parseCanvasUrl(tab.url) : null;
   }
 };
+
+// In-memory cache of gathered course content, keyed by `${origin}:${courseId}`.
+// Lets Canvas chat follow-ups reuse the fetch instead of re-reading every page.
+const courseCache = new Map();
+async function getCourseData(origin, courseId, force = false) {
+  const key = `${origin}:${courseId}`;
+  if (!force && courseCache.has(key)) return courseCache.get(key);
+  const data = await gatherCourse(origin, courseId);
+  courseCache.set(key, data);
+  return data;
+}
 
 // `history` is an optional array of prior {role, content} turns so the agent
 // can answer follow-up questions in context. We cap it to the last few turns
@@ -135,6 +155,110 @@ export const AGENTS = {
     }
   },
 
+  // Rewrite text to read as naturally human-written and evade AI detectors.
+  // Ported from the standalone "rewriter" project but run through this
+  // extension's LLM layer. Uses a hot sampling preset for higher-perplexity,
+  // less-detectable output. `payload.tone` sets the voice; `payload.selection`
+  // (or page text) is the input.
+  rewriter: {
+    desc: "Rewrite text to sound human and undetectable by AI checkers.",
+    async run(task, payload) {
+      const text = (payload?.selection || "").trim() ||
+        (await tools.getActiveTabText()).text.slice(0, 6000);
+      if (!text) return { output: "Select text or open a page with text, then try again." };
+      const tone = (payload?.tone || "natural").toLowerCase();
+      const sys = "You rewrite text so it reads as genuinely human-written and is undetectable by AI checkers. Output ONLY the rewritten text — no preamble, no quotes, no meta-commentary.";
+      const user =
+        `Rewrite this text so it's undetectable by AI checkers. Rules:\n` +
+        `- Use different words, phrasing, sentence structures, and idea order\n` +
+        `- Vary length ±15-25%; mix short punchy sentences with longer ones\n` +
+        `- Sound ${tone} but natural — a real person who writes well, not an AI\n` +
+        `- Use contractions and casual connectors where they fit\n` +
+        `- Avoid: "furthermore", "additionally", "it is important to note", "delve", "crucial", "leverage", "in conclusion", "utilize", "multifaceted"\n` +
+        `- Real writing has personality and slight imperfections — add a few\n` +
+        `- Keep the same meaning and key facts. Output ONLY the rewritten text.\n\n` +
+        `Text to rewrite:\n${text}`;
+      // Hot preset: push token choices toward higher perplexity.
+      const ctx = await insightContext();
+      const messages = [
+        { role: "system", content: ctx ? `${sys}\n\n${ctx}` : sys },
+        { role: "user", content: user },
+      ];
+      const { text: out, provider } = await chat(messages, {
+        temperature: 1.0, top_p: 0.95, frequency_penalty: 0.3, presence_penalty: 0.3,
+      });
+      return { output: out.trim(), provider, tone };
+    }
+  },
+
+  // Canvas LMS assistant: reads a course's pages/modules/assignments/files via
+  // the Canvas REST API (using the user's session) and summarizes, builds study
+  // aids, lists due dates, or answers questions grounded in the course.
+  // `payload.canvas` = { origin, courseId, pageUrl }; `payload.mode` selects the
+  // feature (summary | studyGuide | quiz | due | page | chat).
+  canvas: {
+    desc: "Read a Canvas course (pages, modules, assignments, files) and summarize, build study aids, list due dates, or answer questions.",
+    async run(task, payload) {
+      const cv = payload?.canvas || (await tools.activeCanvas());
+      if (!cv?.courseId) {
+        return { output: "Open a Canvas course page first (a URL like .../courses/12345/...)." };
+      }
+      const { origin, courseId, pageUrl } = cv;
+      // Decide the mode from payload or the task wording.
+      let mode = payload?.mode;
+      if (!mode) {
+        const t = task.toLowerCase();
+        if (/\b(due|deadline|upcoming|assignment.*(when|due))\b/.test(t)) mode = "due";
+        else if (/\b(study guide|review sheet)\b/.test(t)) mode = "studyGuide";
+        else if (/\b(quiz|practice question|test me)\b/.test(t)) mode = "quiz";
+        else if (/\b(this page|current page)\b/.test(t) && pageUrl) mode = "page";
+        else if (/\b(summar|overview|tl;?dr)\b/.test(t)) mode = "summary";
+        else mode = "chat";
+      }
+
+      // Due dates: pure data, no LLM.
+      if (mode === "due") {
+        const list = await upcomingAssignments(origin, courseId);
+        if (!list.length) return { output: "No upcoming assignments with due dates.", provider: "canvas" };
+        const lines = list.map((a) => {
+          const due = new Date(a.due).toLocaleString();
+          const pts = a.points != null ? ` · ${a.points} pts` : "";
+          return `• ${a.name} — due ${due}${pts}`;
+        });
+        return { output: "**Upcoming assignments:**\n" + lines.join("\n"), provider: "canvas", due: list };
+      }
+
+      // Single page summary.
+      if (mode === "page") {
+        if (!pageUrl) return { output: "Open a specific Canvas page to summarize it." };
+        const api = new CanvasAPI(origin);
+        const page = await api.getPage(courseId, pageUrl);
+        const content = `# ${page.title}\n\n${htmlToText(page.body)}`.slice(0, 16000);
+        const { text: out, provider } = await ask(
+          "Summarize this single Canvas page for a student in a few clear bullet points. Be concise.",
+          content, payload?.history);
+        return { output: out, provider };
+      }
+
+      // Whole-course modes (summary / studyGuide / quiz / chat) use gathered content.
+      const data = await getCourseData(origin, courseId);
+      const context = courseToPrompt(data);
+      const SYS = {
+        summary: "Summarize this Canvas course for a student. Use short sections and bullets. Be concise.",
+        studyGuide: "Create a study guide from this Canvas content: key concepts, definitions, likely exam topics. Be concise.",
+        quiz: "Write 5 practice questions with answers based on this Canvas content. Be concise.",
+        chat: "You are a study assistant. Answer the student's question using ONLY the provided Canvas course content. If the answer isn't in it, say so. Be concise.",
+      };
+      const sys = SYS[mode] || SYS.chat;
+      const user = mode === "chat"
+        ? `COURSE CONTENT:\n${context}\n\nQUESTION: ${task}`
+        : context;
+      const { text: out, provider } = await ask(sys, user, payload?.history);
+      const meta = `${data.pages.length} pages · ${data.modules.length} modules · ${data.files.length} files`;
+      return { output: out, provider, meta };
+    }
+  },
+
   // Translate selected text (or the page) to a target language. Detects the
   // target from the task ("translate to Spanish") or payload.lang.
   translator: {
@@ -214,6 +338,8 @@ export const AGENTS = {
 // Strong keyword signals — when these clearly match, skip the LLM round-trip.
 function keywordRoute(t) {
   const tests = [
+    ["canvas", /\b(canvas|course|module|syllabus|assignment|due date|deadline|study guide|lecture|powerpoint|professor posted)\b/],
+    ["rewriter", /\b(undetectable|bypass ai|evade detect|ai checker|turnitin|make.*(undetectable|human)|rewrite.*(undetectable|to pass))\b/],
     ["translator", /\b(translate|translation|in (?:spanish|french|german|chinese|japanese|italian|portuguese|korean|arabic|russian|hindi)|to (?:spanish|french|german|chinese|japanese|italian|portuguese|korean|arabic|russian|hindi))\b/],
     ["writer", /\b(rewrite|reword|paraphrase|fix (?:grammar|this|the)|grammar|proofread|make.*(shorter|concise|professional|casual|friendly|formal)|change the tone|humanize)\b/],
     ["organizer", /\b(tabs?|group|organi[sz]e|declutter|close|dedup|duplicate)\b/],

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Smart Personal Assistant",
-  "version": "0.1.0",
-  "description": "An agentic browser assistant: summarize, organize tabs, research, and stay focused — with a self-improving retrospective loop.",
+  "version": "0.2.0",
+  "description": "An agentic browser assistant: Canvas course summaries/study aids, undetectable rewriting, summarize, organize tabs, research, and stay focused — with a self-improving retrospective loop.",
   "permissions": [
     "tabs",
     "storage",

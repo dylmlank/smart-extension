@@ -118,6 +118,53 @@ document.querySelectorAll("#writeChips button").forEach(b => {
   };
 });
 
+// "Undetectable" rewrite chip: routes to the rewriter agent on the selection.
+document.querySelector("#writeChips button[data-rewrite]").onclick = async () => {
+  const selection = await getSelection();
+  if (!selection) { out.textContent = "Select some text on the page first, then click Undetectable."; return; }
+  resetChat();
+  run("Rewrite this to be undetectable", { selection });
+};
+
+// ---- Canvas: show the section only when the active tab is a Canvas page. ----
+let canvasCtx = null; // { origin, courseId, pageUrl }
+async function detectCanvas() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.url) return;
+    const u = new URL(tab.url);
+    const isCanvas = /\.instructure\.com$/.test(u.hostname) || /\.canvas\.com$/.test(u.hostname);
+    const cm = u.pathname.match(/\/courses\/(\d+)/);
+    if (!isCanvas || !cm) return;
+    const pm = u.pathname.match(/\/courses\/\d+\/pages\/([^/?#]+)/);
+    canvasCtx = {
+      origin: u.origin,
+      courseId: cm[1],
+      pageUrl: pm ? decodeURIComponent(pm[1]) : null,
+    };
+    document.getElementById("canvasSection").style.display = "";
+    document.getElementById("canvasHint").textContent = `course ${canvasCtx.courseId}`;
+    if (canvasCtx.pageUrl) document.getElementById("canvasPageBtn").style.display = "";
+  } catch {}
+}
+detectCanvas();
+
+const CANVAS_LABEL = {
+  summary: "Summarize this Canvas course",
+  studyGuide: "Make a study guide for this course",
+  quiz: "Make a practice quiz for this course",
+  due: "What assignments are due?",
+  page: "Summarize this Canvas page",
+};
+document.querySelectorAll("#canvasChips button").forEach(b => {
+  b.onclick = () => {
+    if (!canvasCtx) { out.textContent = "Open a Canvas course page first."; return; }
+    resetChat();
+    run(CANVAS_LABEL[b.dataset.mode] || "Help with this course",
+        { canvas: canvasCtx, mode: b.dataset.mode });
+  };
+});
+
 // Translate the selection (or the page) into the chosen language.
 document.getElementById("translateBtn").onclick = async () => {
   const lang = document.getElementById("lang").value;
