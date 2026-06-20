@@ -9,6 +9,8 @@
 // Steps can reference prior results and params via "$name" placeholders.
 
 import { chat } from "../core/llm.js";
+import { CanvasAPI, parseCanvasUrl, gatherCourse, courseToPrompt } from "./canvas-api.js";
+import { extractDocText } from "./docparse.js";
 
 const TOOLS_KEY = "custom_tools";
 const CODE_MODE_KEY = "codeModeEnabled";
@@ -111,6 +113,73 @@ const OPS = {
   async openTab(args, ctx) {
     const tab = await chrome.tabs.create({ url: resolve(args.url, ctx), active: !!args.focus });
     return { id: tab.id };
+  },
+  // Read the Canvas course of the active tab (or an explicit {origin,courseId}).
+  // Returns a flattened text digest of pages/modules/assignments/files.
+  async canvasCourse(args, ctx) {
+    let origin = resolve(args.origin, ctx), courseId = resolve(args.courseId, ctx);
+    if (!origin || !courseId) {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const cv = tab?.url ? parseCanvasUrl(tab.url) : null;
+      origin = origin || cv?.origin;
+      courseId = courseId || cv?.courseId;
+    }
+    if (!origin || !courseId) throw new Error("no Canvas course (open a course tab or pass origin+courseId)");
+    const data = await gatherCourse(origin, courseId);
+    return courseToPrompt(data, args.maxChars || 20000);
+  },
+  // List a Canvas course's files (name, type, download url).
+  async canvasFiles(args, ctx) {
+    let origin = resolve(args.origin, ctx), courseId = resolve(args.courseId, ctx);
+    if (!origin || !courseId) {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const cv = tab?.url ? parseCanvasUrl(tab.url) : null;
+      origin = origin || cv?.origin;
+      courseId = courseId || cv?.courseId;
+    }
+    if (!origin || !courseId) throw new Error("no Canvas course");
+    const files = await new CanvasAPI(origin).getFiles(courseId);
+    return files.map((f) => ({ name: f.display_name || f.filename, type: f.content_type, url: f.url }));
+  },
+  // Extract text from a PDF/PPTX at a URL (e.g. a Canvas file).
+  async readDoc(args, ctx) {
+    const url = resolve(args.url, ctx);
+    return (await extractDocText(url, resolve(args.hint, ctx) || "")).slice(0, 16000);
+  },
+  // Save data to a file via the downloads API.
+  async download(args, ctx) {
+    const filename = resolve(args.filename, ctx) || "smart-assistant-output.txt";
+    let url = resolve(args.url, ctx);
+    if (!url) {
+      const content = resolve(args.content, ctx);
+      const text = typeof content === "string" ? content : JSON.stringify(content, null, 2);
+      // data: URL so we don't need a Blob URL lifecycle in the worker.
+      url = "data:text/plain;charset=utf-8," + encodeURIComponent(text);
+    }
+    const id = await chrome.downloads.download({ url, filename, saveAs: false });
+    return { downloadId: id, filename };
+  },
+  // Copy text to the clipboard (best-effort; needs a focused document context).
+  async clipboard(args, ctx) {
+    const text = String(resolve(args.text, ctx) ?? "");
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab?.id) {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id }, args: [text],
+        func: (t) => navigator.clipboard.writeText(t).catch(() => {}),
+      });
+    }
+    return "copied";
+  },
+  // Show a desktop notification.
+  async notify(args, ctx) {
+    chrome.notifications?.create({
+      type: "basic",
+      iconUrl: chrome.runtime.getURL("icons/icon128.png"),
+      title: resolve(args.title, ctx) || "Smart Assistant",
+      message: String(resolve(args.message, ctx) ?? ""),
+    });
+    return "notified";
   }
 };
 
@@ -185,6 +254,12 @@ You write the BODY of an async function. Available in scope:
   api.store(key, value) / api.load(key)
   api.llm(prompt, system?)    -> string from the language model
   api.openTab(url, focus?)    -> {id}
+  api.canvasCourse(opts?)     -> text digest of the active Canvas course
+  api.canvasFiles(opts?)      -> [{name,type,url}] of the course's files
+  api.readDoc(url, hint?)     -> text extracted from a PDF/PPTX at url
+  api.download(filename, content?, url?) -> save a file
+  api.clipboard(text)         -> copy to clipboard
+  api.notify(title, message)  -> desktop notification
   api.log(...)                -> debug log
   params                      -> object of inputs
 You may use loops, try/catch, JSON, fetch results, etc.
@@ -221,6 +296,12 @@ extract {selector,html}    -> text/html from active page matching CSS selector
 store {key,value} / load {key}
 llm {prompt,system,input}  -> run the language model on collected data
 openTab {url,focus}        -> open a new tab
+canvasCourse {origin?,courseId?,maxChars?} -> text digest of the active (or given) Canvas course
+canvasFiles {origin?,courseId?}            -> list of the course's files [{name,type,url}]
+readDoc {url,hint?}        -> extract text from a PDF/PPTX at url (e.g. a Canvas file)
+download {filename,content?,url?} -> save content (or a url) to a file
+clipboard {text}           -> copy text to the clipboard
+notify {title,message}     -> show a desktop notification
 Reference earlier results/params with "$name". Give each step an "as" name to reuse it.`;
 
   const sys = `You design small automation tools as JSON. ONLY use these ops:\n${opDocs}\n\nOutput STRICT JSON only:\n{"name":"snake_case","desc":"what it does","params":["arg1"],"steps":[{"op":"...","as":"x", ...}]}\nNo prose, no markdown fences.`;

@@ -13,13 +13,19 @@ Orchestrator (agents.js)
   ├─ writer       — fix grammar, change tone, humanize selected text
   ├─ rewriter     — rewrite text to read human & evade AI detectors (hot preset)
   ├─ canvas       — read a Canvas course (pages/modules/assignments/files):
-  │                 summarize, study guide, practice quiz, due dates, page summary, Q&A
+  │                 summarize, study guide, practice quiz, due dates, page summary,
+  │                 SLIDES/DOCS (extracts PDF & PowerPoint text), Q&A
   ├─ translator   — translate selection or page to any language
   ├─ organizer    — group, dedupe, close tabs
   ├─ researcher   — explain selection, build a research log
   ├─ focus        — time-on-site coaching
   └─ builder      — SELF-EXTENDING: builds a new tool for any unhandled task
-        │           (toolfactory.js), reuses tools it built before
+        │           (toolfactory.js), reuses tools it built before.
+        │           Ops: fetch, query/extract tabs, store/load, llm, openTab,
+        │           canvasCourse, canvasFiles, readDoc (PDF/PPTX), download,
+        │           clipboard, notify. Manage built tools in the Tools panel
+        │           (popup → "My tools"). Code Mode (Settings) lets it write
+        │           real JS run in a sandboxed iframe.
         │
         ▼
    LLM layer (llm.js) ── races Ollama (local) vs OpenRouter (cloud), fastest wins

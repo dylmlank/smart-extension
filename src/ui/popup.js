@@ -154,6 +154,7 @@ const CANVAS_LABEL = {
   studyGuide: "Make a study guide for this course",
   quiz: "Make a practice quiz for this course",
   due: "What assignments are due?",
+  slides: "Summarize the lecture slides / documents",
   page: "Summarize this Canvas page",
 };
 document.querySelectorAll("#canvasChips button").forEach(b => {
@@ -182,14 +183,9 @@ copyBtn.onclick = async () => {
   } catch { copyBtn.textContent = "✗"; }
 };
 
-document.getElementById("tools").onclick = async e => {
+document.getElementById("tools").onclick = e => {
   e.preventDefault();
-  const { tools } = await chrome.runtime.sendMessage({ type: "listTools" });
-  const names = Object.values(tools || {});
-  out.textContent = names.length
-    ? "🔧 Tools I've built:\n\n" + names.map(t => `• ${t.name} ${t.mode === "code" ? "⚡" : ""}— ${t.desc}`).join("\n")
-    : "No custom tools yet. Ask me to do something new and I'll build one.";
-  prov.textContent = `${names.length} custom tool(s)`;
+  chrome.tabs.create({ url: chrome.runtime.getURL("src/ui/tools.html") });
 };
 
 document.getElementById("opts").onclick = e => { e.preventDefault(); chrome.runtime.openOptionsPage(); };

@@ -12,7 +12,9 @@
     "tabGroups",
     "alarms",
     "offscreen",
-    "contextMenus"
+    "contextMenus",
+    "downloads",
+    "notifications"
   ],
   "sandbox": {
     "pages": ["src/sandbox/sandbox.html"]

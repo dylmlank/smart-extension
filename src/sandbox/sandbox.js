@@ -32,6 +32,12 @@ const api = {
   load: (key) => bridge("load", { key }),
   llm: (prompt, system) => bridge("llm", { prompt, system }),
   openTab: (url, focus) => bridge("openTab", { url, focus }),
+  canvasCourse: (opts) => bridge("canvasCourse", opts || {}),
+  canvasFiles: (opts) => bridge("canvasFiles", opts || {}),
+  readDoc: (url, hint) => bridge("readDoc", { url, hint }),
+  download: (filename, content, url) => bridge("download", { filename, content, url }),
+  clipboard: (text) => bridge("clipboard", { text }),
+  notify: (title, message) => bridge("notify", { title, message }),
   log: (...a) => parent.postMessage({ kind: "log", args: a.map(String) }, "*")
 };
 

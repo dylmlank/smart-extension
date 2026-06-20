@@ -1,7 +1,7 @@
 // Service worker: message router, focus tracking, retrospective scheduler.
 import { orchestrate } from "../agents/agents.js";
 import { runRetrospective } from "./retrospective.js";
-import { listTools, deleteTool, createAndRun } from "../agents/toolfactory.js";
+import { listTools, deleteTool, createAndRun, runOps } from "../agents/toolfactory.js";
 import { parseCanvasUrl } from "../agents/canvas-api.js";
 
 // ---- Message handling from popup / content / options ----
@@ -21,6 +21,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true });
       } else if (msg.type === "buildTool") {
         sendResponse(await createAndRun(msg.task, msg.payload));
+      } else if (msg.type === "runTool") {
+        const tools = await listTools();
+        const tool = tools[msg.name];
+        if (!tool) { sendResponse({ error: "tool not found: " + msg.name }); return; }
+        const result = await runOps(tool, msg.params || {});
+        sendResponse({ result: typeof result === "string" ? result : JSON.stringify(result, null, 2) });
       } else {
         sendResponse({ error: "unknown message" });
       }

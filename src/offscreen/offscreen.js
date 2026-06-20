@@ -7,6 +7,20 @@
 // The iframe runs arbitrary JS but can only reach the whitelist below.
 
 import { chat } from "../core/llm.js";
+import { CanvasAPI, parseCanvasUrl, gatherCourse, courseToPrompt } from "../agents/canvas-api.js";
+import { extractDocText } from "../agents/docparse.js";
+
+// Resolve the active tab's Canvas course, or use explicit origin/courseId.
+async function resolveCanvas(origin, courseId) {
+  if (!origin || !courseId) {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const cv = tab?.url ? parseCanvasUrl(tab.url) : null;
+    origin = origin || cv?.origin;
+    courseId = courseId || cv?.courseId;
+  }
+  if (!origin || !courseId) throw new Error("no Canvas course (open a course tab or pass origin+courseId)");
+  return { origin, courseId };
+}
 
 const box = document.getElementById("box");
 let ready = false;
@@ -51,7 +65,41 @@ const BRIDGE = {
     ]);
     return text;
   },
-  async openTab({ url, focus }) { const t = await chrome.tabs.create({ url, active: !!focus }); return { id: t.id }; }
+  async openTab({ url, focus }) { const t = await chrome.tabs.create({ url, active: !!focus }); return { id: t.id }; },
+  async canvasCourse({ origin, courseId, maxChars }) {
+    const c = await resolveCanvas(origin, courseId);
+    return courseToPrompt(await gatherCourse(c.origin, c.courseId), maxChars || 20000);
+  },
+  async canvasFiles({ origin, courseId }) {
+    const c = await resolveCanvas(origin, courseId);
+    const files = await new CanvasAPI(c.origin).getFiles(c.courseId);
+    return files.map((f) => ({ name: f.display_name || f.filename, type: f.content_type, url: f.url }));
+  },
+  async readDoc({ url, hint }) { return (await extractDocText(url, hint || "")).slice(0, 16000); },
+  async download({ filename, content, url }) {
+    let dl = url;
+    if (!dl) {
+      const text = typeof content === "string" ? content : JSON.stringify(content, null, 2);
+      dl = "data:text/plain;charset=utf-8," + encodeURIComponent(text);
+    }
+    const id = await chrome.downloads.download({ url: dl, filename: filename || "output.txt", saveAs: false });
+    return { downloadId: id };
+  },
+  async clipboard({ text }) {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab?.id) await chrome.scripting.executeScript({
+      target: { tabId: tab.id }, args: [String(text ?? "")],
+      func: (t) => navigator.clipboard.writeText(t).catch(() => {}),
+    });
+    return "copied";
+  },
+  async notify({ title, message }) {
+    chrome.notifications?.create({
+      type: "basic", iconUrl: chrome.runtime.getURL("icons/icon128.png"),
+      title: title || "Smart Assistant", message: String(message ?? ""),
+    });
+    return "notified";
+  }
 };
 
 // Only allow plain method + headers + body on fetch; never credentials/mode tricks.

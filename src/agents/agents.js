@@ -8,6 +8,7 @@ import {
   parseCanvasUrl, gatherCourse, upcomingAssignments,
   courseToPrompt, CanvasAPI, htmlToText,
 } from "./canvas-api.js";
+import { extractDocText } from "./docparse.js";
 
 // ---- Tools the agents can use (browser side effects) ----
 const tools = {
@@ -209,6 +210,7 @@ export const AGENTS = {
       if (!mode) {
         const t = task.toLowerCase();
         if (/\b(due|deadline|upcoming|assignment.*(when|due))\b/.test(t)) mode = "due";
+        else if (/\b(slide|powerpoint|ppt|lecture|pdf|reading|document)\b/.test(t)) mode = "slides";
         else if (/\b(study guide|review sheet)\b/.test(t)) mode = "studyGuide";
         else if (/\b(quiz|practice question|test me)\b/.test(t)) mode = "quiz";
         else if (/\b(this page|current page)\b/.test(t) && pageUrl) mode = "page";
@@ -238,6 +240,42 @@ export const AGENTS = {
           "Summarize this single Canvas page for a student in a few clear bullet points. Be concise.",
           content, payload?.history);
         return { output: out, provider };
+      }
+
+      // Slides/documents: find PDF/PPTX files, extract text, summarize.
+      if (mode === "slides") {
+        const all = await new CanvasAPI(origin).getFiles(courseId);
+        const docs = all
+          .map((f) => ({ name: f.display_name || f.filename, type: f.content_type || "", url: f.url }))
+          .filter((f) => /pdf|presentation|powerpoint|pptx?/i.test(f.type + " " + f.name));
+        if (!docs.length) {
+          return { output: "No readable PDF or PowerPoint files found in this course's Files.", provider: "canvas" };
+        }
+        // Pick the file the user named, else the only one, else list choices.
+        const named = payload?.fileName
+          ? docs.find((d) => d.name === payload.fileName)
+          : docs.find((d) => task.toLowerCase().includes(d.name.toLowerCase().replace(/\.[^.]+$/, "")));
+        const pick = named || (docs.length === 1 ? docs[0] : null);
+        if (!pick) {
+          const list = docs.map((d) => `• ${d.name}`).join("\n");
+          return {
+            output: `Found ${docs.length} readable files. Tell me which one to summarize:\n${list}`,
+            provider: "canvas", files: docs,
+          };
+        }
+        let text;
+        try {
+          text = await extractDocText(pick.url, pick.type + " " + pick.name);
+        } catch (e) {
+          return { output: `Couldn't read "${pick.name}": ${e.message}. It may be a scanned/image file (no text layer).`, provider: "canvas" };
+        }
+        if (!text.trim()) {
+          return { output: `"${pick.name}" has no extractable text (likely scanned images — would need OCR).`, provider: "canvas" };
+        }
+        const { text: out, provider } = await ask(
+          "Summarize these lecture slides / document for a student. Use short sections and bullets. Note key concepts and any definitions. Be concise.",
+          `# ${pick.name}\n\n${text.slice(0, 18000)}`, payload?.history);
+        return { output: out, provider, meta: pick.name };
       }
 
       // Whole-course modes (summary / studyGuide / quiz / chat) use gathered content.
